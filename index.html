@@ -1,0 +1,821 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Hydro-AI: Smart Irrigation System</title>
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Firebase Libraries -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInWithCustomToken, signInAnonymously, onAuthStateChanged, signOut, signInWithEmailAndPassword, createUserWithEmailAndPassword, sendPasswordResetEmail, GoogleAuthProvider, signInWithPopup, PhoneAuthProvider, RecaptchaVerifier } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, doc, getDoc, setDoc, onSnapshot, collection, query, addDoc, serverTimestamp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        import { setLogLevel } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        
+        // Firestore is needed for persistent storage. Using a hardcoded app ID for demonstration.
+        // In a real app, these values would be provided by the environment.
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+       // For Firebase JS SDK v7.20.0 and later, measurementId is optional
+        const firebaseConfig = {
+        apiKey: "AIzaSyCvKwpHAvcu9QSJDjqf_zdiTSGDpdNrJbw",
+        authDomain: "mini-ai-irrigation-system.firebaseapp.com",
+        projectId: "mini-ai-irrigation-system",
+        storageBucket: "mini-ai-irrigation-system.firebasestorage.app",
+        messagingSenderId: "205361105789",
+        appId: "1:205361105789:web:4c75a11eab0f8263265a14",
+        measurementId: "G-KM4XGDFSDR"
+        };
+
+        const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? initialAuthToken : null;
+        
+        let db;
+        let auth;
+        let userId;
+        let currentSensorData = { moisture: 0, temperature: 0, humidity: 0 };
+        let currentWeatherData = { temperature: 25, humidity: 65, condition: "Partly Cloudy" };
+        let isPumpOn = false;
+
+        setLogLevel('debug');
+
+        async function initFirebase() {
+            try {
+                const app = initializeApp(firebaseConfig);
+                db = getFirestore(app);
+                auth = getAuth(app);
+
+                onAuthStateChanged(auth, async (user) => {
+                    if (user) {
+                        userId = user.uid;
+                        console.log("User is signed in:", userId);
+                        document.getElementById('userIdDisplay').textContent = `User: ${userId}`;
+                        document.getElementById('authContainer').classList.add('hidden');
+                        document.getElementById('appContainer').classList.remove('hidden');
+
+                        const userDocRef = doc(db, `/artifacts/${appId}/users/${userId}/data/settings`);
+                        const userDocSnap = await getDoc(userDocRef);
+                        if (!userDocSnap.exists()) {
+                            await setDoc(userDocRef, {
+                                pumpStatus: "off",
+                                aiMode: true,
+                                lastManualOverride: null,
+                            });
+                            console.log("Initial Firestore data created for new user.");
+                        }
+                        setupRealtimeListeners();
+                        startSimulation();
+                    } else {
+                        console.log("User is signed out or not authenticated.");
+                        document.getElementById('appContainer').classList.add('hidden');
+                        document.getElementById('authContainer').classList.remove('hidden');
+                        updateAuthView('login');
+                        // Use anonymous sign-in for the purpose of the demo if no user is found
+                        if (!initialAuthToken) {
+                            signInAnonymously(auth);
+                        }
+                    }
+                });
+
+                if (initialAuthToken) {
+                    await signInWithCustomToken(auth, initialAuthToken);
+                } else {
+                    // This will be handled by onAuthStateChanged
+                }
+
+            } catch (error) {
+                console.error("Error initializing Firebase:", error);
+                document.getElementById('statusMessage').textContent = "Error: Could not connect to database. See console for details.";
+            }
+        }
+        
+        async function setupRealtimeListeners() {
+            const settingsDocRef = doc(db, `/artifacts/${appId}/users/${userId}/data/settings`);
+            onSnapshot(settingsDocRef, (docSnap) => {
+                if (docSnap.exists()) {
+                    const data = docSnap.data();
+                    updatePumpStatus(data.pumpStatus === "on");
+                    updateAiMode(data.aiMode);
+                }
+            }, (error) => {
+                console.error("Error listening to settings:", error);
+            });
+
+            const sensorCollectionRef = collection(db, `/artifacts/${appId}/users/${userId}/data/sensors`);
+            const q = query(sensorCollectionRef);
+            onSnapshot(q, (snapshot) => {
+                snapshot.docChanges().forEach((change) => {
+                    if (change.type === "added" || change.type === "modified") {
+                        const sensorData = change.doc.data();
+                        updateSensorReadings(sensorData);
+                        simulateAiLogic(); 
+                        updateDiagnostics();
+                    }
+                });
+            }, (error) => {
+                console.error("Error listening to sensors:", error);
+            });
+        }
+
+        async function savePumpStatus(status) {
+            if (!db || !userId) return console.error("Database not initialized or user not logged in.");
+            const settingsDocRef = doc(db, `/artifacts/${appId}/users/${userId}/data/settings`);
+            try {
+                isPumpOn = (status === "on");
+                await setDoc(settingsDocRef, { pumpStatus: status, lastManualOverride: serverTimestamp() }, { merge: true });
+                console.log("Pump status updated to:", status);
+                showMessage(`Pump turned ${status}.`, "success");
+            } catch (e) {
+                console.error("Error updating pump status:", e);
+                showMessage("Failed to update pump status.", "error");
+            }
+        }
+
+        async function saveAiMode(mode) {
+            if (!db || !userId) return console.error("Database not initialized or user not logged in.");
+            const settingsDocRef = doc(db, `/artifacts/${appId}/users/${userId}/data/settings`);
+            try {
+                await setDoc(settingsDocRef, { aiMode: mode }, { merge: true });
+                console.log("AI mode updated to:", mode);
+                showMessage(`AI Mode ${mode ? 'Enabled' : 'Disabled'}.`, "success");
+            } catch (e) {
+                console.error("Error updating AI mode:", e);
+                showMessage("Failed to update AI mode.", "error");
+            }
+        }
+        
+        function updatePumpStatus(isOn) {
+            isPumpOn = isOn;
+            const pumpStatusText = document.getElementById('pumpStatusText');
+            const pumpButton = document.getElementById('pumpControlButton');
+            const pumpIndicator = document.getElementById('pumpIndicator');
+            const systemStatus = document.getElementById('systemStatus');
+            if (isOn) {
+                pumpStatusText.textContent = "ON";
+                pumpButton.textContent = "STOP PUMP";
+                pumpButton.classList.remove('bg-green-600', 'hover:bg-green-700');
+                pumpButton.classList.add('bg-red-600', 'hover:bg-red-700');
+                pumpIndicator.classList.remove('bg-red-500', 'animate-pulse');
+                pumpIndicator.classList.add('bg-green-500');
+                systemStatus.textContent = "Watering Active";
+            } else {
+                pumpStatusText.textContent = "OFF";
+                pumpButton.textContent = "START PUMP";
+                pumpButton.classList.remove('bg-red-600', 'hover:bg-red-700');
+                pumpButton.classList.add('bg-green-600', 'hover:bg-green-700');
+                pumpIndicator.classList.remove('bg-green-500');
+                pumpIndicator.classList.add('bg-red-500', 'animate-pulse');
+                systemStatus.textContent = "All Zones OK";
+            }
+        }
+
+        function updateAiMode(isAiMode) {
+            const aiModeToggle = document.getElementById('aiModeToggle');
+            const manualControls = document.getElementById('manualControls');
+            aiModeToggle.checked = isAiMode;
+            if (isAiMode) {
+                manualControls.classList.add('hidden');
+                document.getElementById('aiRecommendations').classList.remove('hidden');
+            } else {
+                manualControls.classList.remove('hidden');
+                document.getElementById('aiRecommendations').classList.add('hidden');
+            }
+        }
+
+        function updateSensorReadings(data) {
+            currentSensorData = data; 
+            document.getElementById('moistureValue').textContent = `${data.moisture}%`;
+            document.getElementById('moistureValue-zone1').textContent = `${data.moisture}%`;
+            document.getElementById('moistureBar').style.width = `${data.moisture}%`;
+            document.getElementById('tempValue').textContent = `${data.temperature}°C`;
+            document.getElementById('humidityValue').textContent = `${data.humidity}%`;
+            document.getElementById('currentTemperature').textContent = `${data.temperature}°C`;
+            document.getElementById('currentHumidity').textContent = `${data.humidity}% Humidity`;
+
+            const moistureBar = document.getElementById('moistureBar');
+            moistureBar.classList.remove('bg-green-500', 'bg-yellow-500', 'bg-red-500');
+            if (data.moisture > 60) moistureBar.classList.add('bg-green-500');
+            else if (data.moisture > 30) moistureBar.classList.add('bg-yellow-500');
+            else moistureBar.classList.add('bg-red-500');
+        }
+
+        function updateWeatherData() {
+            const conditions = ["Sunny", "Partly Cloudy", "Rain Expected", "Overcast"];
+            const randomCondition = conditions[Math.floor(Math.random() * conditions.length)];
+            const randomTemp = Math.floor(Math.random() * 10) + 20; 
+            const randomHumid = Math.floor(Math.random() * 20) + 50; 
+            currentWeatherData = {
+                temperature: randomTemp,
+                humidity: randomHumid,
+                condition: randomCondition
+            };
+            document.getElementById('currentWeatherCondition').textContent = currentWeatherData.condition;
+            document.getElementById('currentTemperature').textContent = `${currentWeatherData.temperature}°C`;
+            document.getElementById('currentHumidity').textContent = `${currentWeatherData.humidity}% Humidity`;
+        }
+
+        async function simulateAiLogic() {
+            const aiModeToggle = document.getElementById('aiModeToggle').checked;
+            if (!aiModeToggle || !currentSensorData.moisture) return;
+
+            const moisture = currentSensorData.moisture;
+            const weather = currentWeatherData.condition;
+            const recommendation = document.getElementById('aiRecommendationMessage');
+
+            let message = "";
+
+            if (weather.includes("Rain Expected")) {
+                message = `The AI predicts rain. Watering has been intelligently paused to conserve water.`;
+                if (isPumpOn) {
+                    await savePumpStatus("off");
+                }
+            } else if (moisture < 30) {
+                message = `Soil moisture is critically low. The AI is starting the pump to prevent crop damage.`;
+                if (!isPumpOn) {
+                    await savePumpStatus("on");
+                }
+            } else if (moisture > 70) {
+                message = `Soil moisture is optimal. The AI has turned off the pump to prevent overwatering.`;
+                if (isPumpOn) {
+                    await savePumpStatus("off");
+                }
+            } else {
+                message = `Conditions are stable. The AI is monitoring soil moisture and weather for any changes.`;
+            }
+            recommendation.textContent = `**AI Prediction:** "${message}"`;
+        }
+        
+        function updateDiagnostics() {
+            const diagnosticsContainer = document.getElementById('diagnosticsContainer');
+            diagnosticsContainer.innerHTML = ''; 
+
+            const diagnostics = [];
+            
+            if (currentSensorData.moisture < 20) {
+                diagnostics.push({
+                    type: 'Problem',
+                    message: 'Extreme low soil moisture detected. Check if your pump is working correctly or if there is a blockage in the water line.',
+                    color: 'bg-red-500'
+                });
+            } else if (currentSensorData.moisture > 80) {
+                diagnostics.push({
+                    type: 'Problem',
+                    message: 'High moisture detected. Check if the pump is stuck ON or if there is excessive rain in the area.',
+                    color: 'bg-red-500'
+                });
+            } else if (currentWeatherData.condition === "Rain Expected" && isPumpOn) {
+                diagnostics.push({
+                    type: 'Suggestion',
+                    message: 'The pump is currently ON despite rain being expected. Consider enabling AI mode to automatically conserve water.',
+                    color: 'bg-yellow-500'
+                });
+            } else {
+                diagnostics.push({
+                    type: 'Status',
+                    message: 'All system parameters are within optimal range. No issues detected.',
+                    color: 'bg-green-500'
+                });
+            }
+
+            diagnostics.forEach(diag => {
+                const diagElement = document.createElement('div');
+                diagElement.className = `${diag.color} text-white p-4 rounded-lg shadow-md mb-2`;
+                diagElement.innerHTML = `<span class="font-bold">${diag.type}:</span> ${diag.message}`;
+                diagnosticsContainer.appendChild(diagElement);
+            });
+        }
+        
+        function addMessage(text, isUser) {
+            const messagesContainer = document.getElementById('chatMessages');
+            const messageElement = document.createElement('div');
+            messageElement.className = `p-3 rounded-lg max-w-[80%] mb-3 ${isUser ? 'bg-blue-600 text-white ml-auto' : 'bg-gray-700 text-gray-200 mr-auto'}`;
+            messageElement.textContent = text;
+            messagesContainer.appendChild(messageElement);
+            messagesContainer.scrollTop = messagesContainer.scrollHeight; 
+        }
+
+        async function generateAiResponse(userInput) {
+            let response = "I'm sorry, I can only provide information about the smart irrigation system. Please ask me about current conditions or system status.";
+            const inputLower = userInput.toLowerCase();
+
+            if (inputLower.includes("hello") || inputLower.includes("hi")) {
+                response = "Hello! How can I help you with your irrigation system today?";
+            } else if (inputLower.includes("moisture") || inputLower.includes("soil")) {
+                response = `Current soil moisture is ${currentSensorData.moisture}%.`;
+            } else if (inputLower.includes("temperature") || inputLower.includes("temp")) {
+                response = `Current temperature is ${currentSensorData.temperature}°C.`;
+            } else if (inputLower.includes("humidity")) {
+                response = `Current humidity is ${currentSensorData.humidity}%.`;
+            } else if (inputLower.includes("weather")) {
+                response = `The current weather is ${currentWeatherData.condition}, with a temperature of ${currentWeatherData.temperature}°C.`;
+            } else if (inputLower.includes("pump") || inputLower.includes("watering")) {
+                response = `The pump is currently ${isPumpOn ? 'ON and actively watering' : 'OFF'}.`;
+            } else if (inputLower.includes("thanks") || inputLower.includes("thank you")) {
+                response = "You're welcome! Let me know if you need anything else.";
+            }
+
+            addMessage(response, false);
+        }
+
+        function handleChatInput() {
+            const chatInput = document.getElementById('chatInput');
+            const userInput = chatInput.value.trim();
+            if (userInput) {
+                addMessage(userInput, true);
+                generateAiResponse(userInput);
+                chatInput.value = '';
+            }
+        }
+        
+        function handleVoiceInput() {
+            addMessage("Voice input is currently not active in this simulation, but it would work using the browser's SpeechRecognition API. What would you like to ask?", false);
+        }
+
+        let sensorInterval;
+        function startSimulation() {
+            if (!db) return;
+            setInterval(updateWeatherData, 30000);
+            updateWeatherData(); 
+
+            sensorInterval = setInterval(async () => {
+                const moisture = Math.floor(Math.random() * 100);
+                const temperature = Math.floor(Math.random() * 20) + 15;
+                const humidity = Math.floor(Math.random() * 50) + 40;
+                const sensorData = {
+                    moisture,
+                    temperature,
+                    humidity,
+                    timestamp: serverTimestamp()
+                };
+                try {
+                    await addDoc(collection(db, `/artifacts/${appId}/users/${userId}/data/sensors`), sensorData);
+                } catch (e) {
+                    console.error("Error adding document: ", e);
+                }
+            }, 5000); 
+        }
+
+        function showMessage(msg, type = "info") {
+            const messageBox = document.getElementById('statusMessage');
+            messageBox.textContent = msg;
+            messageBox.className = "p-4 rounded-md mt-4 text-sm font-medium transition-opacity duration-300";
+            if (type === "success") {
+                messageBox.classList.add('bg-green-500', 'text-white');
+            } else if (type === "error") {
+                messageBox.classList.add('bg-red-500', 'text-white');
+            } else {
+                messageBox.classList.add('bg-gray-800', 'text-gray-200');
+            }
+            messageBox.classList.remove('opacity-0');
+            setTimeout(() => {
+                messageBox.classList.add('opacity-0');
+            }, 5000);
+        }
+        
+        function updateActiveTab(tabName) {
+            document.querySelectorAll('.tab-content').forEach(el => el.classList.add('hidden'));
+            document.querySelectorAll('.tab-button').forEach(el => el.classList.remove('border-green-500', 'text-green-500'));
+            
+            document.getElementById(`${tabName}-tab`).classList.remove('hidden');
+            document.getElementById(`tab-btn-${tabName}`).classList.add('border-green-500', 'text-green-500');
+        }
+
+        // --- Authentication Functions ---
+        function updateAuthView(viewName) {
+            document.querySelectorAll('.auth-view').forEach(el => el.classList.add('hidden'));
+            document.getElementById(viewName).classList.remove('hidden');
+        }
+
+        async function handleEmailSignUp(e) {
+            e.preventDefault();
+            const email = document.getElementById('signupEmail').value;
+            const password = document.getElementById('signupPassword').value;
+            try {
+                await createUserWithEmailAndPassword(auth, email, password);
+                showMessage("Account created successfully. Logging you in...", "success");
+            } catch (error) {
+                console.error("Signup error:", error);
+                showMessage(`Signup failed: ${error.message}`, "error");
+            }
+        }
+
+        async function handleEmailLogin(e) {
+            e.preventDefault();
+            const email = document.getElementById('loginEmail').value;
+            const password = document.getElementById('loginPassword').value;
+            try {
+                await signInWithEmailAndPassword(auth, email, password);
+                showMessage("Logged in successfully!", "success");
+            } catch (error) {
+                console.error("Login error:", error);
+                showMessage(`Login failed: ${error.message}`, "error");
+            }
+        }
+
+        async function handleGoogleLogin() {
+            try {
+                const provider = new GoogleAuthProvider();
+                await signInWithPopup(auth, provider);
+                showMessage("Logged in with Google successfully!", "success");
+            } catch (error) {
+                console.error("Google login error:", error);
+                showMessage(`Google login failed: ${error.message}`, "error");
+            }
+        }
+        
+        async function handlePhoneLogin(e) {
+            e.preventDefault();
+            const phoneNumber = document.getElementById('phoneInput').value;
+            window.recaptchaVerifier = new RecaptchaVerifier(auth, 'recaptcha-container', {
+                'size': 'invisible',
+                'callback': (response) => {
+                    // reCAPTCHA solved, allow signInWithPhoneNumber.
+                }
+            });
+            try {
+                const phoneProvider = new PhoneAuthProvider(auth);
+                const verificationId = await phoneProvider.verifyPhoneNumber(phoneNumber, window.recaptchaVerifier);
+                const verificationCode = prompt("Please enter the OTP sent to your phone:");
+                const credential = phoneProvider.credential(verificationId, verificationCode);
+                await signInWithCredential(auth, credential);
+                showMessage("Logged in with phone number successfully!", "success");
+            } catch (error) {
+                console.error("Phone login error:", error);
+                showMessage(`Phone login failed: ${error.message}`, "error");
+            }
+        }
+
+        async function handlePasswordReset() {
+            const email = prompt("Please enter your email address to reset your password:");
+            if (email) {
+                try {
+                    await sendPasswordResetEmail(auth, email);
+                    showMessage("Password reset email sent. Check your inbox.", "success");
+                } catch (error) {
+                    console.error("Password reset error:", error);
+                    showMessage(`Password reset failed: ${error.message}`, "error");
+                }
+            }
+        }
+
+        async function handleSignOut() {
+            try {
+                await signOut(auth);
+                showMessage("Signed out successfully.", "success");
+            } catch (error) {
+                console.error("Sign out error:", error);
+                showMessage(`Sign out failed: ${error.message}`, "error");
+            }
+        }
+
+        window.onload = function() {
+            initFirebase();
+            updateActiveTab('dashboard');
+
+            document.getElementById('pumpControlButton').addEventListener('click', async () => {
+                const pumpStatus = isPumpOn ? "off" : "on";
+                await savePumpStatus(pumpStatus);
+            });
+
+            document.getElementById('aiModeToggle').addEventListener('change', async (event) => {
+                const isAiMode = event.target.checked;
+                await saveAiMode(isAiMode);
+            });
+
+            document.getElementById('tab-btn-dashboard').addEventListener('click', () => updateActiveTab('dashboard'));
+            document.getElementById('tab-btn-assistant').addEventListener('click', () => updateActiveTab('assistant'));
+            document.getElementById('tab-btn-diagnostics').addEventListener('click', () => updateActiveTab('diagnostics'));
+            
+            document.getElementById('sendButton').addEventListener('click', handleChatInput);
+            document.getElementById('voiceButton').addEventListener('click', handleVoiceInput);
+            document.getElementById('chatInput').addEventListener('keypress', (e) => {
+                if (e.key === 'Enter') {
+                    handleChatInput();
+                }
+            });
+
+            document.getElementById('showDashboard').addEventListener('click', () => {
+                document.getElementById('dashboardView').classList.remove('hidden');
+                document.getElementById('zoneDetailView').classList.add('hidden');
+            });
+
+            document.getElementById('showZoneDetail').addEventListener('click', () => {
+                document.getElementById('dashboardView').classList.add('hidden');
+                document.getElementById('zoneDetailView').classList.remove('hidden');
+            });
+            
+            // Auth listeners
+            document.getElementById('login-form').addEventListener('submit', handleEmailLogin);
+            document.getElementById('signup-form').addEventListener('submit', handleEmailSignUp);
+            document.getElementById('google-login-btn').addEventListener('click', handleGoogleLogin);
+            document.getElementById('phone-login-form').addEventListener('submit', handlePhoneLogin);
+            document.getElementById('forgot-password-link').addEventListener('click', handlePasswordReset);
+            document.getElementById('logout-btn').addEventListener('click', handleSignOut);
+            
+            document.getElementById('showSignup').addEventListener('click', (e) => {
+                e.preventDefault();
+                updateAuthView('signup');
+            });
+            document.getElementById('showLogin').addEventListener('click', (e) => {
+                e.preventDefault();
+                updateAuthView('login');
+            });
+        };
+    </script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700&display=swap');
+        body {
+            font-family: 'Inter', sans-serif;
+        }
+        .bg-gradient-radial {
+            background-image: radial-gradient(circle, var(--tw-gradient-stops));
+        }
+        #moistureBar {
+            transition: width 0.5s ease-in-out;
+        }
+        .tab-button {
+            border-bottom: 2px solid transparent;
+            transition: all 0.2s ease-in-out;
+        }
+    </style>
+</head>
+<body class="bg-gray-950 text-gray-200 min-h-screen p-4 sm:p-8 flex items-center justify-center">
+    
+    <!-- Authentication Container (shown by default) -->
+    <div id="authContainer" class="w-full max-w-sm bg-gray-900 rounded-2xl p-6 sm:p-10 shadow-lg border border-gray-800">
+        <div id="login" class="auth-view">
+            <h2 class="text-3xl font-bold text-center text-gray-100 mb-6">Log In</h2>
+            <form id="login-form">
+                <div class="mb-4">
+                    <input type="email" id="loginEmail" placeholder="Email" class="w-full p-3 rounded-lg bg-gray-800 text-gray-200 border border-gray-700 focus:outline-none focus:ring-2 focus:ring-green-500" required>
+                </div>
+                <div class="mb-6">
+                    <input type="password" id="loginPassword" placeholder="Password" class="w-full p-3 rounded-lg bg-gray-800 text-gray-200 border border-gray-700 focus:outline-none focus:ring-2 focus:ring-green-500" required>
+                </div>
+                <button type="submit" class="w-full bg-green-600 hover:bg-green-700 text-white font-bold py-3 rounded-lg transition-colors">Log In</button>
+            </form>
+            <div class="text-center mt-4 text-gray-400 text-sm">
+                <a href="#" id="forgot-password-link" class="hover:text-green-400">Forgot Password?</a>
+            </div>
+            <div class="text-center my-4 text-gray-500">
+                OR
+            </div>
+            <div class="flex flex-col space-y-3">
+                <button id="google-login-btn" class="w-full flex items-center justify-center gap-2 bg-gray-800 hover:bg-gray-700 text-white font-bold py-3 rounded-lg transition-colors border border-gray-700">
+                    <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                        <path d="M22.56 12.28c0-.78-.07-1.54-.2-2.28H12v4.51h6.24c-.28 1.48-1.15 2.76-2.52 3.63v3.29h4.21a11.16 11.16 0 003.57-8.15z" />
+                        <path d="M12 23.99c2.83 0 5.19-.93 6.92-2.52l-4.2-3.29c-1.15.77-2.6.99-4.32.99-3.32 0-6.14-2.23-7.14-5.22H.67v3.29a12 12 0 0011.33 8.75z" />
+                        <path d="M4.86 14.12c-.5-.14-1.01-.2-1.52-.2-.51 0-1.02.06-1.52.2V10.83H.67a12.02 12.02 0 000 6.34h1.15a8.77 8.77 0 013.04-4.22z" />
+                        <path d="M12 4.86c1.69 0 3.2.58 4.39 1.77l3.77-3.77A11.96 11.96 0 0012 .13C5.64.13.38 5.4.38 12h1.15c0-4.6 3.06-8.52 7.29-9.87z" />
+                    </svg>
+                    <span>Sign in with Google</span>
+                </button>
+                <div class="text-center my-4 text-gray-500">
+                    OR
+                </div>
+                <form id="phone-login-form">
+                    <div class="mb-4">
+                        <input type="tel" id="phoneInput" placeholder="Phone Number" class="w-full p-3 rounded-lg bg-gray-800 text-gray-200 border border-gray-700 focus:outline-none focus:ring-2 focus:ring-green-500" required>
+                    </div>
+                    <div id="recaptcha-container"></div>
+                    <button type="submit" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 rounded-lg transition-colors">
+                        Sign in with Phone
+                    </button>
+                </form>
+            </div>
+            <div class="text-center mt-6 text-gray-400">
+                Don't have an account? <a href="#" id="showSignup" class="text-green-400 font-semibold hover:underline">Sign up</a>
+            </div>
+        </div>
+        <div id="signup" class="auth-view hidden">
+            <h2 class="text-3xl font-bold text-center text-gray-100 mb-6">Sign Up</h2>
+            <form id="signup-form">
+                <div class="mb-4">
+                    <input type="email" id="signupEmail" placeholder="Email" class="w-full p-3 rounded-lg bg-gray-800 text-gray-200 border border-gray-700 focus:outline-none focus:ring-2 focus:ring-green-500" required>
+                </div>
+                <div class="mb-6">
+                    <input type="password" id="signupPassword" placeholder="Password" class="w-full p-3 rounded-lg bg-gray-800 text-gray-200 border border-gray-700 focus:outline-none focus:ring-2 focus:ring-green-500" required>
+                </div>
+                <button type="submit" class="w-full bg-green-600 hover:bg-green-700 text-white font-bold py-3 rounded-lg transition-colors">Sign Up</button>
+            </form>
+            <div class="text-center mt-6 text-gray-400">
+                Already have an account? <a href="#" id="showLogin" class="text-green-400 font-semibold hover:underline">Log In</a>
+            </div>
+        </div>
+    </div>
+
+    <!-- Main App Container (hidden by default) -->
+    <div id="appContainer" class="hidden w-full max-w-4xl bg-gray-900 rounded-2xl p-6 sm:p-10 shadow-lg border border-gray-800">
+        <!-- Header -->
+        <header class="flex flex-col sm:flex-row items-start sm:items-center justify-between mb-8">
+            <div class="flex items-center gap-4 mb-4 sm:mb-0">
+                <div class="p-2 bg-green-500 rounded-full">
+                    <svg class="w-8 h-8 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 3v18M12 3c-1.105 0-2 .895-2 2s.895 2 2 2h0c1.105 0 2-.895 2-2s-.895-2-2-2zM4 14h16m-8 0a4 4 0 100-8 4 4 0 000 8z"></path>
+                    </svg>
+                </div>
+                <h1 class="text-3xl sm:text-4xl font-bold text-gray-100">Hydro-AI</h1>
+            </div>
+            <div class="flex flex-col items-start sm:items-end text-sm text-gray-400">
+                <span id="userIdDisplay" class="truncate">User: Loading...</span>
+                <button id="logout-btn" class="mt-1 text-red-400 hover:text-red-500 font-semibold">Log Out</button>
+            </div>
+        </header>
+
+        <!-- Status Message -->
+        <div id="statusMessage" class="opacity-0 transition-opacity duration-300"></div>
+
+        <!-- Tab Navigation -->
+        <div class="flex border-b border-gray-700 mb-6">
+            <button id="tab-btn-dashboard" class="tab-button flex-1 text-center py-3 text-lg font-semibold text-gray-400 hover:text-gray-200 hover:border-gray-500">Dashboard</button>
+            <button id="tab-btn-assistant" class="tab-button flex-1 text-center py-3 text-lg font-semibold text-gray-400 hover:text-gray-200 hover:border-gray-500">AI Assistant</button>
+            <button id="tab-btn-diagnostics" class="tab-button flex-1 text-center py-3 text-lg font-semibold text-gray-400 hover:text-gray-200 hover:border-gray-500">Diagnostics</button>
+        </div>
+
+        <!-- Dashboard Content -->
+        <div id="dashboard-tab" class="tab-content view">
+            <div id="dashboardView" class="view">
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
+                    <div class="bg-gray-800 p-6 rounded-xl shadow-inner border border-gray-700">
+                        <h3 class="text-sm text-gray-400 mb-2">System Status</h3>
+                        <div class="flex items-center justify-between">
+                            <span id="systemStatus" class="text-xl font-bold text-green-400">All Zones OK</span>
+                            <div id="pumpIndicator" class="w-4 h-4 rounded-full bg-red-500 animate-pulse"></div>
+                        </div>
+                    </div>
+                    <div class="bg-gray-800 p-6 rounded-xl shadow-inner border border-gray-700">
+                        <h3 class="text-sm text-gray-400 mb-2">Current Weather</h3>
+                        <div class="flex items-center gap-2">
+                            <svg class="w-8 h-8 text-yellow-300" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364-6.364l-.707-.707M6.343 17.657l-.707.707M16.364 6.364l.707-.707M6.343 6.343l.707-.707M12 8a4 4 0 100 8 4 4 0 000-8z"></path>
+                            </svg>
+                            <div>
+                                <span id="currentWeatherCondition" class="text-xl font-bold text-gray-100">Loading...</span>
+                                <span class="text-sm text-gray-400"><span id="currentTemperature"></span>, <span id="currentHumidity"></span></span>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="bg-gray-800 p-6 rounded-xl shadow-inner border border-gray-700">
+                        <h3 class="text-sm text-gray-400 mb-2">Next Watering</h3>
+                        <p class="text-lg font-bold text-gray-100">Tomorrow at 6:00 AM</p>
+                        <p class="text-xs text-gray-500">Scheduled by AI</p>
+                    </div>
+                </div>
+
+                <div class="bg-gray-800 p-6 rounded-xl shadow-inner border border-gray-700 mb-8">
+                    <h3 class="text-lg font-semibold text-gray-100 mb-4">Garden Zones Overview</h3>
+                    <div class="grid grid-cols-2 lg:grid-cols-4 gap-4">
+                        <div id="showZoneDetail" class="relative bg-gray-700 rounded-lg p-6 text-center cursor-pointer hover:bg-gray-600 transition-colors">
+                            <span class="absolute top-2 right-2 w-3 h-3 rounded-full bg-green-500 animate-pulse"></span>
+                            <h4 class="text-base font-semibold text-gray-100">Flower Bed</h4>
+                            <p class="text-sm text-gray-400">Moisture: <span id="moistureValue-zone1">75%</span></p>
+                        </div>
+                        <div class="relative bg-gray-700 rounded-lg p-6 text-center">
+                            <span class="absolute top-2 right-2 w-3 h-3 rounded-full bg-yellow-500"></span>
+                            <h4 class="text-base font-semibold text-gray-100">Lawn</h4>
+                            <p class="text-sm text-gray-400">Moisture: 40%</p>
+                        </div>
+                        <div class="relative bg-gray-700 rounded-lg p-6 text-center">
+                            <span class="absolute top-2 right-2 w-3 h-3 rounded-full bg-red-500"></span>
+                            <h4 class="text-base font-semibold text-gray-100">Vegetable Patch</h4>
+                            <p class="text-sm text-gray-400">Moisture: 22%</p>
+                        </div>
+                        <div class="relative bg-gray-700 rounded-lg p-6 text-center">
+                            <span class="absolute top-2 right-2 w-3 h-3 rounded-full bg-green-500"></span>
+                            <h4 class="text-base font-semibold text-gray-100">Fruit Trees</h4>
+                            <p class="text-sm text-gray-400">Moisture: 68%</p>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="bg-gray-800 p-6 rounded-xl shadow-inner border border-gray-700">
+                    <h3 class="text-lg font-semibold text-gray-100 mb-4">AI & System Control</h3>
+                    
+                    <div class="flex items-center justify-between mb-4">
+                        <span class="text-gray-400">Enable AI-Powered Mode</span>
+                        <label class="relative inline-flex items-center cursor-pointer">
+                            <input type="checkbox" id="aiModeToggle" class="sr-only peer" checked>
+                            <div class="w-11 h-6 bg-gray-600 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-green-400 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-green-600"></div>
+                        </label>
+                    </div>
+                    
+                    <div id="aiRecommendations">
+                        <p class="text-gray-400 mb-4">The AI is actively monitoring conditions and optimizing your schedule.</p>
+                        <div class="p-4 bg-gray-700 rounded-lg">
+                            <p id="aiRecommendationMessage" class="text-sm text-gray-200">
+                                **AI Prediction:** "Loading initial data..."
+                            </p>
+                        </div>
+                    </div>
+
+                    <div id="manualControls" class="hidden">
+                        <p class="text-gray-400 mb-4">You have disabled AI mode. Manual controls are now active.</p>
+                        <button id="pumpControlButton" class="w-full bg-green-600 hover:bg-green-700 text-white font-bold py-3 rounded-xl transition-colors">
+                            START PUMP
+                        </button>
+                        <p class="text-center text-gray-500 text-xs mt-2">Current pump status: <span id="pumpStatusText">OFF</span></p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Zone Detail View (Hidden by default) -->
+            <div id="zoneDetailView" class="view hidden">
+                <button id="showDashboard" class="text-gray-400 hover:text-gray-200 mb-6 flex items-center gap-2">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"></path>
+                    </svg>
+                    Back to Dashboard
+                </button>
+                <h2 class="text-3xl font-bold text-gray-100 mb-6">Flower Bed - Zone 1</h2>
+                
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
+                    <!-- Sensor Reading Card -->
+                    <div class="bg-gray-800 p-6 rounded-xl shadow-inner border border-gray-700">
+                        <h3 class="text-sm text-gray-400 mb-2">Soil Moisture</h3>
+                        <div class="flex items-end gap-2 mb-2">
+                            <span id="moistureValue" class="text-4xl font-extrabold text-green-400">75%</span>
+                        </div>
+                        <div class="w-full bg-gray-700 h-2 rounded-full overflow-hidden">
+                            <div id="moistureBar" class="h-full rounded-full" style="width: 75%;"></div>
+                        </div>
+                    </div>
+                    
+                    <!-- Temperature Card -->
+                    <div class="bg-gray-800 p-6 rounded-xl shadow-inner border border-gray-700">
+                        <h3 class="text-sm text-gray-400 mb-2">Temperature</h3>
+                        <span id="tempValue" class="text-4xl font-extrabold text-gray-100">25°C</span>
+                        <p class="text-sm text-gray-500 mt-1">Optimal for this crop</p>
+                    </div>
+                    
+                    <!-- Humidity Card -->
+                    <div class="bg-gray-800 p-6 rounded-xl shadow-inner border border-gray-700">
+                        <h3 class="text-sm text-gray-400 mb-2">Humidity</h3>
+                        <span id="humidityValue" class="text-4xl font-extrabold text-gray-100">65%</span>
+                        <p class="text-sm text-gray-500 mt-1">Air humidity</p>
+                    </div>
+                </div>
+                
+                <!-- Historical Data (Graph Placeholder) -->
+                <div class="bg-gray-800 p-6 rounded-xl shadow-inner border border-gray-700">
+                    <h3 class="text-lg font-semibold text-gray-100 mb-4">Moisture Trends (Past 7 Days)</h3>
+                    <div class="w-full h-48 bg-gray-700 rounded-lg flex items-center justify-center text-gray-500 italic">
+                        [ Placeholder for Chart.js graph ]
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- AI Assistant Tab -->
+        <div id="assistant-tab" class="tab-content hidden">
+            <div class="flex flex-col h-[60vh] max-h-[60vh] bg-gray-800 rounded-xl shadow-inner border border-gray-700">
+                <div id="chatMessages" class="flex-1 p-6 overflow-y-auto flex flex-col space-y-3">
+                    <!-- Chat messages will be appended here -->
+                    <div class="p-3 rounded-lg max-w-[80%] bg-gray-700 text-gray-200 mr-auto">
+                        Hello! I am Hydro-AI, your smart irrigation assistant. How can I help?
+                    </div>
+                </div>
+                <div class="p-4 border-t border-gray-700 flex items-center gap-2">
+                    <input id="chatInput" type="text" placeholder="Ask about soil moisture, weather, or pump status..." class="flex-1 bg-gray-900 text-white rounded-full px-4 py-2 focus:outline-none focus:ring-2 focus:ring-green-500">
+                    <button id="voiceButton" class="bg-gray-700 hover:bg-gray-600 rounded-full p-2 transition-colors">
+                        <svg class="w-6 h-6 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a4 4 0 11-8 0 4 4 0 018 0z"></path>
+                        </svg>
+                    </button>
+                    <button id="sendButton" class="bg-green-600 hover:bg-green-700 text-white rounded-full p-2 transition-colors">
+                        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 12h14M12 5l7 7-7 7"></path>
+                        </svg>
+                    </button>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Diagnostics Tab -->
+        <div id="diagnostics-tab" class="tab-content hidden">
+            <h3 class="text-2xl font-bold text-gray-100 mb-4">System Health & Diagnostics</h3>
+            <p class="text-sm text-gray-400 mb-6">Hydro-AI continuously monitors all components and provides real-time health checks and suggestions.</p>
+            <div id="diagnosticsContainer" class="flex flex-col space-y-4">
+                <!-- Diagnostics messages will be dynamically added here -->
+            </div>
+        </div>
+        
+    </div>
+
+    <!-- Footer -->
+    <footer class="mt-8 w-full max-w-4xl text-center text-gray-500 text-sm">
+        <hr class="border-gray-800 mb-4" />
+        <div class="flex flex-wrap justify-center gap-6 mb-4">
+            <a href="#" class="text-gray-400 hover:text-green-500 transition-colors">
+                <svg class="w-6 h-6" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path d="M8.29 22.02c.62.2.82-.04.82-.25v-2.18c0-.62-.25-.75-.5-1.02 2.37-.26 4.86-1.18 4.86-5.26 0-1.16-.4-2.13-1.05-2.88.1-.25.46-1.37-.1-2.84 0 0-.85-.28-2.78 1.1-.8-.22-1.65-.33-2.5-.33-1.85 0-3.7.35-4.5 1.1-.98-1.42-1.63-1.6-1.63-1.6-.5 1.35-.1 2.47-.1 2.84-.66.75-1.06 1.72-1.06 2.88 0 4.08 2.49 5.0 4.86 5.26-.25.27-.5.7-.5 1.02v2.18c0 .21.2.45.82.25 4.38-1.5 7.54-5.45 7.54-10.02 0-5.6-4.57-10.18-10.18-10.18s-10.18 4.58-10.18 10.18c0 4.57 3.16 8.52 7.54 10.02z"/></svg>
+            </a>
+            <a href="#" class="text-gray-400 hover:text-green-500 transition-colors">
+                <svg class="w-6 h-6" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2.163c3.275 0 3.684.01 4.978.073a4.791 4.791 0 011.66.307 2.76 2.76 0 011.688 1.688 4.79 4.79 0 01.307 1.66c.063 1.294.073 1.703.073 4.978s-.01 3.684-.073 4.978a4.791 4.791 0 01-.307 1.66 2.76 2.76 0 01-1.688 1.688 4.79 4.79 0 01-1.66.307c-1.294.063-1.703.073-4.978.073s-3.684-.01-4.978-.073a4.791 4.791 0 01-1.66-.307 2.76 2.76 0 01-1.688-1.688 4.79-4.79 0 01-.307-1.66c-.063-1.294-.073-1.703-.073-4.978s.01-3.684.073-4.978a4.791 4.791 0 01.307-1.66 2.76 2.76 0 011.688-1.688 4.79-4.79 0 011.66-.307c1.294-.063 1.703-.073 4.978-.073zM12 11.237a.763.763 0 11.001 1.527.763.763 0 01-.001-1.527zM18.3 7.8a.751.751 0 00-.75-.75.751.751 0 00-.75.75.751.751 0 00.75.75.751.751 0 00.75-.75z"/></svg>
+            </a>
+            <a href="#" class="text-gray-400 hover:text-green-500 transition-colors">
+                <svg class="w-6 h-6" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path d="M23.953 4.57a10 10 0 01-2.825.775 4.958 4.958 0 002.163-2.723c-.951.564-2.005.974-3.127 1.185a4.912 4.912 0 00-8.384 4.482c-.9-.49-1.76-.996-2.613-1.503a4.896 4.896 0 00-6.173 5.378c.321 1.184.97 2.17 1.84 2.946a4.896 4.896 0 01-2.228-.616v.061a4.91 4.91 0 003.951 4.827 4.981 4.981 0 01-2.224.085c.613 1.905 2.345 3.29 4.412 3.329-1.928 1.51-4.364 2.417-7.014 2.417a9.756 9.756 0 001.373.08c1.868 0 3.65-.63 5.09-1.84a13.882 13.882 0 005.5-5.996c.032-.128.053-.257.085-.386-.145.025-.29.053-.437.075a.5.5 0 01-.132.025a4.868 4.868 0 001.196-1.554 4.897 4.897 0 00-3.321-7.295z"/></svg>
+            </a>
+        </div>
+        <p>&copy; 2024 Hydro-AI. All Rights Reserved.</p>
+        <p>Contact: your-email@example.com | +1 (123) 456-7890</p>
+    </footer>
+</body>
+</html>
