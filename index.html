@@ -30,11 +30,36 @@
         let db;
         let auth;
         let userId;
-        let currentSensorData = { moisture: 0, temperature: 0, humidity: 0 };
+        let sensorData = {
+            'zone1': { moisture: 0, temperature: 0, humidity: 0, crop: 'Lavender' },
+            'zone2': { moisture: 0, temperature: 0, humidity: 0, crop: 'Zoysia Grass' },
+            'zone3': { moisture: 0, temperature: 0, humidity: 0, crop: 'Tomatoes' },
+            'zone4': { moisture: 0, temperature: 0, humidity: 0, crop: 'Apple Trees' }
+        };
         let currentWeatherData = { temperature: 25, humidity: 65, condition: "Partly Cloudy" };
         let isPumpOn = false;
+        let activeZone = 'zone1';
 
         setLogLevel('debug');
+
+        const crops = {
+            'Lavender': {
+                photo: 'https://placehold.co/200x200/4c3b53/f3e8ff?text=Lavender',
+                description: 'A drought-tolerant perennial that thrives in full sun and well-drained soil. Requires minimal watering once established.'
+            },
+            'Zoysia Grass': {
+                photo: 'https://placehold.co/200x200/526d3d/d2ffc0?text=Zoysia+Grass',
+                description: 'A warm-season grass known for its durability and drought resistance. It requires less water than other common lawn types.'
+            },
+            'Tomatoes': {
+                photo: 'https://placehold.co/200x200/c72c1c/fff5e0?text=Tomatoes',
+                description: 'A heat-loving vegetable that requires consistent moisture to prevent cracking and blossom-end rot. Needs more frequent watering.'
+            },
+            'Apple Trees': {
+                photo: 'https://placehold.co/200x200/942b00/d9b48f?text=Apple+Trees',
+                description: 'Established trees have deep roots and require less frequent but deep watering. Proper irrigation is crucial for fruit development.'
+            }
+        };
 
         async function initFirebase() {
             try {
@@ -45,8 +70,6 @@
                 onAuthStateChanged(auth, async (user) => {
                     if (user) {
                         userId = user.uid;
-                        console.log("User is signed in:", userId);
-                        // Format UID for a more unique appearance
                         const formattedUid = `${userId.substring(0, 4)}-${Math.floor(Math.random() * 9000) + 1000}-!@#*`;
                         document.getElementById('userIdDisplay').textContent = `User: ${formattedUid}`;
                         document.getElementById('authContainer').classList.add('hidden');
@@ -60,16 +83,13 @@
                                 aiMode: true,
                                 lastManualOverride: null,
                             });
-                            console.log("Initial Firestore data created for new user.");
                         }
                         setupRealtimeListeners();
                         startSimulation();
                     } else {
-                        console.log("User is signed out or not authenticated.");
                         document.getElementById('appContainer').classList.add('hidden');
                         document.getElementById('authContainer').classList.remove('hidden');
                         updateAuthView('login');
-                        // Use anonymous sign-in for the purpose of the demo if no user is found
                         if (!initialAuthToken) {
                             signInAnonymously(auth);
                         }
@@ -106,7 +126,17 @@
                 snapshot.docChanges().forEach((change) => {
                     if (change.type === "added" || change.type === "modified") {
                         const sensorData = change.doc.data();
-                        updateSensorReadings(sensorData);
+                        const zoneId = change.doc.id;
+                        if (sensorData.moisture && sensorData.temperature && sensorData.humidity) {
+                            sensorData.moisture = sensorData.moisture > 100 ? 100 : sensorData.moisture;
+                            sensorData.temperature = sensorData.temperature > 40 ? 40 : sensorData.temperature;
+                            sensorData.humidity = sensorData.humidity > 100 ? 100 : sensorData.humidity;
+                            sensorData.moisture = sensorData.moisture < 0 ? 0 : sensorData.moisture;
+                            sensorData.temperature = sensorData.temperature < -10 ? -10 : sensorData.temperature;
+                            sensorData.humidity = sensorData.humidity < 0 ? 0 : sensorData.humidity;
+                        }
+                        sensorData[zoneId] = { ...sensorData[zoneId], ...sensorData };
+                        updateSensorReadings(zoneId, sensorData);
                         simulateAiLogic(); 
                         updateDiagnostics();
                     }
@@ -122,7 +152,6 @@
             try {
                 isPumpOn = (status === "on");
                 await setDoc(settingsDocRef, { pumpStatus: status, lastManualOverride: serverTimestamp() }, { merge: true });
-                console.log("Pump status updated to:", status);
                 showMessage(`Pump turned ${status}.`, "success");
             } catch (e) {
                 console.error("Error updating pump status:", e);
@@ -135,7 +164,6 @@
             const settingsDocRef = doc(db, `/artifacts/${appId}/users/${userId}/data/settings`);
             try {
                 await setDoc(settingsDocRef, { aiMode: mode }, { merge: true });
-                console.log("AI mode updated to:", mode);
                 showMessage(`AI Mode ${mode ? 'Enabled' : 'Disabled'}.`, "success");
             } catch (e) {
                 console.error("Error updating AI mode:", e);
@@ -181,21 +209,35 @@
             }
         }
 
-        function updateSensorReadings(data) {
-            currentSensorData = data; 
-            document.getElementById('moistureValue').textContent = `${data.moisture}%`;
-            document.getElementById('moistureValue-zone1').textContent = `${data.moisture}%`;
-            document.getElementById('moistureBar').style.width = `${data.moisture}%`;
-            document.getElementById('tempValue').textContent = `${data.temperature}°C`;
-            document.getElementById('humidityValue').textContent = `${data.humidity}%`;
-            document.getElementById('currentTemperature').textContent = `${data.temperature}°C`;
-            document.getElementById('currentHumidity').textContent = `${data.humidity}% Humidity`;
+        function updateSensorReadings(zoneId, data) {
+            sensorData[zoneId] = data;
 
-            const moistureBar = document.getElementById('moistureBar');
-            moistureBar.classList.remove('bg-green-500', 'bg-yellow-500', 'bg-red-500');
-            if (data.moisture > 60) moistureBar.classList.add('bg-green-500');
-            else if (data.moisture > 30) moistureBar.classList.add('bg-yellow-500');
-            else moistureBar.classList.add('bg-red-500');
+            const moistureCard = document.getElementById(`${zoneId}-moisture-card`);
+            if (moistureCard) {
+                const moistureValue = moistureCard.querySelector('.moisture-value');
+                const moistureBar = moistureCard.querySelector('.moisture-bar');
+                moistureValue.textContent = `${data.moisture}%`;
+                moistureBar.style.width = `${data.moisture}%`;
+                
+                moistureBar.classList.remove('bg-green-500', 'bg-yellow-500', 'bg-red-500');
+                if (data.moisture > 60) moistureBar.classList.add('bg-green-500');
+                else if (data.moisture > 30) moistureBar.classList.add('bg-yellow-500');
+                else moistureBar.classList.add('bg-red-500');
+
+                const statusIndicator = moistureCard.querySelector('.status-indicator');
+                statusIndicator.classList.remove('bg-green-500', 'bg-yellow-500', 'bg-red-500', 'animate-pulse');
+                if (data.moisture > 60) statusIndicator.classList.add('bg-green-500', 'animate-pulse');
+                else if (data.moisture > 30) statusIndicator.classList.add('bg-yellow-500');
+                else statusIndicator.classList.add('bg-red-500');
+            }
+
+            if (zoneId === activeZone) {
+                document.getElementById('moistureValue').textContent = `${data.moisture}%`;
+                document.getElementById('moistureBar').style.width = `${data.moisture}%`;
+                document.getElementById('moistureBar').className = `h-full rounded-full ${data.moisture > 60 ? 'bg-green-500' : data.moisture > 30 ? 'bg-yellow-500' : 'bg-red-500'}`;
+                document.getElementById('tempValue').textContent = `${data.temperature}°C`;
+                document.getElementById('humidityValue').textContent = `${data.humidity}%`;
+            }
         }
 
         function updateWeatherData() {
@@ -215,29 +257,31 @@
 
         async function simulateAiLogic() {
             const aiModeToggle = document.getElementById('aiModeToggle').checked;
-            if (!aiModeToggle || !currentSensorData.moisture) return;
-
-            const moisture = currentSensorData.moisture;
+            if (!aiModeToggle) return;
+            
             const weather = currentWeatherData.condition;
             const recommendation = document.getElementById('aiRecommendationMessage');
+            let overallMoisture = 0;
+            let zonesNeedingAttention = [];
+
+            for (const zone in sensorData) {
+                overallMoisture += sensorData[zone].moisture;
+                if (sensorData[zone].moisture < 30) {
+                    zonesNeedingAttention.push(sensorData[zone].crop);
+                }
+            }
+            const averageMoisture = overallMoisture / Object.keys(sensorData).length;
 
             let message = "";
-
             if (weather.includes("Rain Expected")) {
-                message = `The AI predicts rain. Watering has been intelligently paused to conserve water.`;
-                if (isPumpOn) {
-                    await savePumpStatus("off");
-                }
-            } else if (moisture < 30) {
-                message = `Soil moisture is critically low. The AI is starting the pump to prevent crop damage.`;
-                if (!isPumpOn) {
-                    await savePumpStatus("on");
-                }
-            } else if (moisture > 70) {
-                message = `Soil moisture is optimal. The AI has turned off the pump to prevent overwatering.`;
-                if (isPumpOn) {
-                    await savePumpStatus("off");
-                }
+                message = `The AI predicts rain. All scheduled watering has been paused.`;
+                if (isPumpOn) await savePumpStatus("off");
+            } else if (zonesNeedingAttention.length > 0) {
+                message = `Low moisture detected in ${zonesNeedingAttention.join(', ')}. AI is initiating a smart watering cycle.`;
+                if (!isPumpOn) await savePumpStatus("on");
+            } else if (averageMoisture > 75) {
+                message = `All zones are sufficiently watered. AI has turned off the pump to prevent overwatering.`;
+                if (isPumpOn) await savePumpStatus("off");
             } else {
                 message = `Conditions are stable. The AI is monitoring soil moisture and weather for any changes.`;
             }
@@ -247,30 +291,32 @@
         function updateDiagnostics() {
             const diagnosticsContainer = document.getElementById('diagnosticsContainer');
             diagnosticsContainer.innerHTML = ''; 
-
+            
             const diagnostics = [];
             
-            if (currentSensorData.moisture < 20) {
-                diagnostics.push({
-                    type: 'Problem',
-                    message: 'Extreme low soil moisture detected. Check if your pump is working correctly or if there is a blockage in the water line.',
-                    color: 'bg-red-500'
-                });
-            } else if (currentSensorData.moisture > 80) {
-                diagnostics.push({
-                    type: 'Problem',
-                    message: 'High moisture detected. Check if the pump is stuck ON or if there is excessive rain in the area.',
-                    color: 'bg-red-500'
-                });
-            } else if (currentWeatherData.condition === "Rain Expected" && isPumpOn) {
-                diagnostics.push({
-                    type: 'Suggestion',
-                    message: 'The pump is currently ON despite rain being expected. Consider enabling AI mode to automatically conserve water.',
-                    color: 'bg-yellow-500'
-                });
-            } else {
+            for (const zone in sensorData) {
+                const data = sensorData[zone];
+                if (data.moisture < 20) {
+                    diagnostics.push({
+                        type: 'Problem',
+                        zone: data.crop,
+                        message: `Extreme low soil moisture detected. Check the sensor and pump for Zone ${zone.replace('zone', '')}.`,
+                        color: 'bg-red-500'
+                    });
+                } else if (data.moisture > 80) {
+                    diagnostics.push({
+                        type: 'Problem',
+                        zone: data.crop,
+                        message: `High moisture detected. Check for stuck pump or excessive rain for Zone ${zone.replace('zone', '')}.`,
+                        color: 'bg-red-500'
+                    });
+                }
+            }
+
+            if (diagnostics.length === 0) {
                 diagnostics.push({
                     type: 'Status',
+                    zone: 'All Zones',
                     message: 'All system parameters are within optimal range. No issues detected.',
                     color: 'bg-green-500'
                 });
@@ -279,7 +325,7 @@
             diagnostics.forEach(diag => {
                 const diagElement = document.createElement('div');
                 diagElement.className = `${diag.color} text-white p-4 rounded-lg shadow-md mb-2`;
-                diagElement.innerHTML = `<span class="font-bold">${diag.type}:</span> ${diag.message}`;
+                diagElement.innerHTML = `<span class="font-bold">${diag.type} (${diag.zone}):</span> ${diag.message}`;
                 diagnosticsContainer.appendChild(diagElement);
             });
         }
@@ -300,11 +346,11 @@
             if (inputLower.includes("hello") || inputLower.includes("hi")) {
                 response = "Hello! I am Hydro-AI, your smart irrigation assistant. How can I help?";
             } else if (inputLower.includes("moisture") || inputLower.includes("soil")) {
-                response = `Current soil moisture is ${currentSensorData.moisture}%.`;
+                response = `Current soil moisture is ${sensorData[activeZone].moisture}%.`;
             } else if (inputLower.includes("temperature") || inputLower.includes("temp")) {
-                response = `Current temperature is ${currentSensorData.temperature}°C.`;
+                response = `Current temperature is ${sensorData[activeZone].temperature}°C.`;
             } else if (inputLower.includes("humidity")) {
-                response = `Current humidity is ${currentSensorData.humidity}%.`;
+                response = `Current humidity is ${sensorData[activeZone].humidity}%.`;
             } else if (inputLower.includes("weather")) {
                 response = `The current weather is ${currentWeatherData.condition}, with a temperature of ${currentWeatherData.temperature}°C.`;
             } else if (inputLower.includes("pump") || inputLower.includes("watering")) {
@@ -337,19 +383,21 @@
             updateWeatherData(); 
 
             sensorInterval = setInterval(async () => {
-                const moisture = Math.floor(Math.random() * 100);
-                const temperature = Math.floor(Math.random() * 20) + 15;
-                const humidity = Math.floor(Math.random() * 50) + 40;
-                const sensorData = {
-                    moisture,
-                    temperature,
-                    humidity,
-                    timestamp: serverTimestamp()
-                };
-                try {
-                    await addDoc(collection(db, `/artifacts/${appId}/users/${userId}/data/sensors`), sensorData);
-                } catch (e) {
-                    console.error("Error adding document: ", e);
+                for (const zone in sensorData) {
+                    const moisture = Math.floor(Math.random() * 100);
+                    const temperature = Math.floor(Math.random() * 20) + 15;
+                    const humidity = Math.floor(Math.random() * 50) + 40;
+                    const sensorDataPoint = {
+                        moisture,
+                        temperature,
+                        humidity,
+                        timestamp: serverTimestamp()
+                    };
+                    try {
+                        await setDoc(doc(db, `/artifacts/${appId}/users/${userId}/data/sensors/${zone}`), sensorDataPoint);
+                    } catch (e) {
+                        console.error("Error adding document: ", e);
+                    }
                 }
             }, 5000); 
         }
@@ -377,6 +425,17 @@
             
             document.getElementById(`${tabName}-tab`).classList.remove('hidden');
             document.getElementById(`tab-btn-${tabName}`).classList.add('border-green-500', 'text-green-500');
+        }
+
+        function setActiveZone(zoneId) {
+            activeZone = zoneId;
+            const data = sensorData[zoneId];
+            document.getElementById('zoneDetailTitle').textContent = `${data.crop} - Zone ${zoneId.replace('zone', '')}`;
+            document.getElementById('moistureValue').textContent = `${data.moisture}%`;
+            document.getElementById('moistureBar').style.width = `${data.moisture}%`;
+            document.getElementById('moistureBar').className = `h-full rounded-full ${data.moisture > 60 ? 'bg-green-500' : data.moisture > 30 ? 'bg-yellow-500' : 'bg-red-500'}`;
+            document.getElementById('tempValue').textContent = `${data.temperature}°C`;
+            document.getElementById('humidityValue').textContent = `${data.humidity}%`;
         }
 
         // --- Authentication Functions ---
@@ -450,6 +509,26 @@
         window.onload = function() {
             initFirebase();
             updateActiveTab('dashboard');
+            
+            // Set up dark mode based on local storage or system preference
+            if (localStorage.theme === 'light' || (!('theme' in localStorage) && window.matchMedia('(prefers-color-scheme: light)').matches)) {
+                document.documentElement.classList.add('light-mode');
+            } else {
+                document.documentElement.classList.add('dark-mode');
+            }
+
+            document.getElementById('mode-toggle').addEventListener('click', () => {
+                const isLightMode = document.documentElement.classList.contains('light-mode');
+                if (isLightMode) {
+                    document.documentElement.classList.remove('light-mode');
+                    document.documentElement.classList.add('dark-mode');
+                    localStorage.theme = 'dark';
+                } else {
+                    document.documentElement.classList.remove('dark-mode');
+                    document.documentElement.classList.add('light-mode');
+                    localStorage.theme = 'light';
+                }
+            });
 
             document.getElementById('pumpControlButton').addEventListener('click', async () => {
                 const pumpStatus = isPumpOn ? "off" : "on";
@@ -464,6 +543,7 @@
             document.getElementById('tab-btn-dashboard').addEventListener('click', () => updateActiveTab('dashboard'));
             document.getElementById('tab-btn-assistant').addEventListener('click', () => updateActiveTab('assistant'));
             document.getElementById('tab-btn-diagnostics').addEventListener('click', () => updateActiveTab('diagnostics'));
+            document.getElementById('tab-btn-crops').addEventListener('click', () => updateActiveTab('crops'));
             
             document.getElementById('sendButton').addEventListener('click', handleChatInput);
             document.getElementById('voiceButton').addEventListener('click', handleVoiceInput);
@@ -473,14 +553,18 @@
                 }
             });
 
+            document.querySelectorAll('.zone-card').forEach(card => {
+                card.addEventListener('click', (event) => {
+                    const zoneId = event.currentTarget.dataset.zone;
+                    setActiveZone(zoneId);
+                    document.getElementById('dashboardView').classList.add('hidden');
+                    document.getElementById('zoneDetailView').classList.remove('hidden');
+                });
+            });
+
             document.getElementById('showDashboard').addEventListener('click', () => {
                 document.getElementById('dashboardView').classList.remove('hidden');
                 document.getElementById('zoneDetailView').classList.add('hidden');
-            });
-
-            document.getElementById('showZoneDetail').addEventListener('click', () => {
-                document.getElementById('dashboardView').classList.add('hidden');
-                document.getElementById('zoneDetailView').classList.remove('hidden');
             });
             
             // Auth listeners
@@ -498,16 +582,183 @@
                 e.preventDefault();
                 updateAuthView('login');
             });
+
+            const cropsContainer = document.getElementById('cropsContainer');
+            for (const cropName in crops) {
+                const crop = crops[cropName];
+                const cropCard = document.createElement('div');
+                cropCard.className = 'bg-gray-800 rounded-xl shadow-inner border border-gray-700 p-4';
+                cropCard.innerHTML = `
+                    <img src="${crop.photo}" alt="${cropName}" class="rounded-xl w-full h-auto mb-4">
+                    <h3 class="text-xl font-bold text-gray-100 mb-2">${cropName}</h3>
+                    <p class="text-gray-400 text-sm">${crop.description}</p>
+                `;
+                cropsContainer.appendChild(cropCard);
+            }
         };
     </script>
     <style>
-        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700&display=swap');
+        :root {
+            --bg-color: #0d111c;
+            --text-color: #e2e8f0;
+            --card-bg: #161b22;
+            --border-color: #24292f;
+            --input-bg: #1a1f26;
+            --input-border: #30363d;
+            --button-bg-primary: #1e7145;
+            --button-hover-primary: #15623e;
+        }
+
+        body.light-mode {
+            --bg-color: #f3f4f6;
+            --text-color: #1f2937;
+            --card-bg: #ffffff;
+            --border-color: #e5e7eb;
+            --input-bg: #f9fafb;
+            --input-border: #d1d5db;
+            --button-bg-primary: #10b981;
+            --button-hover-primary: #059669;
+        }
+
         body {
-            font-family: 'Inter', sans-serif;
+            background-color: var(--bg-color);
+            color: var(--text-color);
+            transition: background-color 0.3s, color 0.3s;
         }
-        .bg-gradient-radial {
-            background-image: radial-gradient(circle, var(--tw-gradient-stops));
+        .bg-gray-950, .bg-gray-900 {
+            background-color: var(--bg-color);
         }
+        .bg-gray-900 {
+            background-color: var(--card-bg);
+        }
+        .text-gray-200, .text-gray-100, .text-gray-400 {
+            color: var(--text-color);
+        }
+        .bg-gray-800 {
+            background-color: var(--card-bg);
+        }
+        .border-gray-800 {
+            border-color: var(--border-color);
+        }
+        .bg-gray-800:hover, .bg-gray-700:hover {
+            background-color: var(--input-bg);
+        }
+        .bg-gray-800:focus, .bg-gray-700:focus {
+            background-color: var(--input-bg);
+        }
+        .bg-gray-800:focus:ring-green-500, .bg-gray-700:focus:ring-green-500 {
+            border-color: var(--button-bg-primary);
+        }
+        .bg-gray-700 {
+            background-color: var(--card-bg);
+        }
+        .border-gray-700 {
+            border-color: var(--border-color);
+        }
+        .bg-green-600 {
+            background-color: var(--button-bg-primary);
+        }
+        .hover:bg-green-700:hover {
+            background-color: var(--button-hover-primary);
+        }
+        .border-green-500 {
+            border-color: #10b981;
+        }
+        .text-green-500 {
+            color: #10b981;
+        }
+        .text-green-400 {
+            color: var(--button-bg-primary);
+        }
+        .hover:text-green-400:hover {
+            color: var(--button-hover-primary);
+        }
+        .bg-gray-800 {
+            background-color: var(--input-bg);
+        }
+        .bg-gray-700 {
+            background-color: var(--card-bg);
+        }
+        .text-gray-400, .text-gray-500 {
+            color: var(--text-color);
+        }
+        .text-gray-400:hover, .text-gray-200:hover {
+            color: var(--text-color);
+        }
+        .bg-red-600 {
+            background-color: #dc2626;
+        }
+        .hover:bg-red-700:hover {
+            background-color: #b91c1c;
+        }
+        .text-red-400 {
+            color: #f87171;
+        }
+        .hover:text-red-500:hover {
+            color: #ef4444;
+        }
+        @media (prefers-color-scheme: dark) {
+            body:not(.light-mode) {
+                background-color: var(--bg-color);
+                color: var(--text-color);
+            }
+        }
+        
+        .mode-toggle-btn {
+            position: relative;
+            display: inline-block;
+            width: 50px;
+            height: 28px;
+            cursor: pointer;
+            border-radius: 9999px;
+            background-color: var(--card-bg);
+            border: 1px solid var(--border-color);
+            transition: all 0.3s ease;
+        }
+        
+        .mode-toggle-btn::before {
+            content: '';
+            position: absolute;
+            left: 2px;
+            top: 2px;
+            width: 22px;
+            height: 22px;
+            border-radius: 9999px;
+            background-color: var(--text-color);
+            transition: transform 0.3s ease;
+        }
+        
+        .mode-toggle-btn.toggled::before {
+            transform: translateX(22px);
+        }
+
+        .mode-toggle-btn .icon {
+            position: absolute;
+            top: 50%;
+            transform: translateY(-50%);
+            width: 18px;
+            height: 18px;
+            transition: opacity 0.3s ease;
+        }
+        
+        .mode-toggle-btn .moon-icon {
+            left: 5px;
+            opacity: 1;
+        }
+        
+        .mode-toggle-btn.toggled .moon-icon {
+            opacity: 0;
+        }
+        
+        .mode-toggle-btn .sun-icon {
+            right: 5px;
+            opacity: 0;
+        }
+        
+        .mode-toggle-btn.toggled .sun-icon {
+            opacity: 1;
+        }
+        
         #moistureBar {
             transition: width 0.5s ease-in-out;
         }
@@ -582,9 +833,19 @@
                 </div>
                 <h1 class="text-3xl sm:text-4xl font-bold text-gray-100">Hydro-AI</h1>
             </div>
-            <div class="flex flex-col items-start sm:items-end text-sm text-gray-400">
-                <span id="userIdDisplay" class="truncate">User: Loading...</span>
-                <button id="logout-btn" class="mt-1 text-red-400 hover:text-red-500 font-semibold">Log Out</button>
+            <div class="flex items-center gap-4">
+                <label id="mode-toggle" class="mode-toggle-btn">
+                    <svg class="moon-icon icon" fill="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                        <path d="M21.73 17.51a1.2 1.2 0 01-1.35.34A9.91 9.91 0 0013.06 4.3a1.2 1.2 0 01-1.1-2.12c-.22-.38-.72-.51-1.12-.32A10.87 10.87 0 002.5 12c0 5.92 4.8 10.74 10.71 10.74a10.87 10.87 0 008.85-4.54 1.2 1.2 0 01.37-1.07zm-2.88-2.67a8.55 8.55 0 01-6.15 2.53A8.53 8.53 0 015.65 12a8.55 8.55 0 016.15-2.52 8.53 8.53 0 017.05 4.7z"></path>
+                    </svg>
+                    <svg class="sun-icon icon" fill="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                        <path d="M12 4.5a.9.9 0 00-1 0 .9.9 0 00-.5 1.5l1.62 1.62a.9.9 0 001.28 0l1.62-1.62a.9.9 0 00-.5-1.5zM3 12a.9.9 0 001.8 0 .9.9 0 00-1.8 0zM21 12a.9.9 0 001.8 0 .9.9 0 00-1.8 0zM12 21a.9.9 0 001-1.5l-1.62-1.62a.9.9 0 00-1.28 0L9.5 19.5a.9.9 0 00.5 1.5zM5.5 5.5a.9.9 0 00-1.27 0 .9.9 0 000 1.28l1.62 1.62a.9.9 0 001.28 0l1.62-1.62a.9.9 0 00-1.28 0zM18.5 18.5a.9.9 0 00-1.27 0 .9.9 0 000 1.28l1.62 1.62a.9.9 0 001.28 0l1.62-1.62a.9.9 0 00-1.28 0zM18.5 5.5a.9.9 0 00-1.27 0 .9.9 0 000 1.28l1.62 1.62a.9.9 0 001.28 0l1.62-1.62a.9.9 0 00-1.28 0zM5.5 18.5a.9.9 0 00-1.27 0 .9.9 0 000 1.28l1.62 1.62a.9.9 0 001.28 0l1.62-1.62a.9.9 0 00-1.28 0zM12 10.5a1.5 1.5 0 100 3 1.5 1.5 0 000-3z"></path>
+                    </svg>
+                </label>
+                <div class="flex flex-col items-start sm:items-end text-sm text-gray-400">
+                    <span id="userIdDisplay" class="truncate">User: Loading...</span>
+                    <button id="logout-btn" class="mt-1 text-red-400 hover:text-red-500 font-semibold">Log Out</button>
+                </div>
             </div>
         </header>
 
@@ -596,6 +857,7 @@
             <button id="tab-btn-dashboard" class="tab-button flex-1 text-center py-3 text-lg font-semibold text-gray-400 hover:text-gray-200 hover:border-gray-500">Dashboard</button>
             <button id="tab-btn-assistant" class="tab-button flex-1 text-center py-3 text-lg font-semibold text-gray-400 hover:text-gray-200 hover:border-gray-500">AI Assistant</button>
             <button id="tab-btn-diagnostics" class="tab-button flex-1 text-center py-3 text-lg font-semibold text-gray-400 hover:text-gray-200 hover:border-gray-500">Diagnostics</button>
+            <button id="tab-btn-crops" class="tab-button flex-1 text-center py-3 text-lg font-semibold text-gray-400 hover:text-gray-200 hover:border-gray-500">What's Growing?</button>
         </div>
 
         <!-- Dashboard Content -->
@@ -631,25 +893,25 @@
                 <div class="bg-gray-800 p-6 rounded-xl shadow-inner border border-gray-700 mb-8">
                     <h3 class="text-lg font-semibold text-gray-100 mb-4">Garden Zones Overview</h3>
                     <div class="grid grid-cols-2 lg:grid-cols-4 gap-4">
-                        <div id="showZoneDetail" class="relative bg-gray-700 rounded-lg p-6 text-center cursor-pointer hover:bg-gray-600 transition-colors">
-                            <span class="absolute top-2 right-2 w-3 h-3 rounded-full bg-green-500 animate-pulse"></span>
+                        <div class="zone-card relative bg-gray-700 rounded-lg p-6 text-center cursor-pointer hover:bg-gray-600 transition-colors" data-zone="zone1" id="zone1-moisture-card">
+                            <span class="status-indicator absolute top-2 right-2 w-3 h-3 rounded-full bg-green-500 animate-pulse"></span>
                             <h4 class="text-base font-semibold text-gray-100">Flower Bed</h4>
-                            <p class="text-sm text-gray-400">Moisture: <span id="moistureValue-zone1">75%</span></p>
+                            <p class="text-sm text-gray-400">Moisture: <span class="moisture-value">75%</span></p>
                         </div>
-                        <div class="relative bg-gray-700 rounded-lg p-6 text-center">
-                            <span class="absolute top-2 right-2 w-3 h-3 rounded-full bg-yellow-500"></span>
+                        <div class="zone-card relative bg-gray-700 rounded-lg p-6 text-center cursor-pointer hover:bg-gray-600 transition-colors" data-zone="zone2" id="zone2-moisture-card">
+                            <span class="status-indicator absolute top-2 right-2 w-3 h-3 rounded-full bg-yellow-500"></span>
                             <h4 class="text-base font-semibold text-gray-100">Lawn</h4>
-                            <p class="text-sm text-gray-400">Moisture: 40%</p>
+                            <p class="text-sm text-gray-400">Moisture: <span class="moisture-value">40%</span></p>
                         </div>
-                        <div class="relative bg-gray-700 rounded-lg p-6 text-center">
-                            <span class="absolute top-2 right-2 w-3 h-3 rounded-full bg-red-500"></span>
+                        <div class="zone-card relative bg-gray-700 rounded-lg p-6 text-center cursor-pointer hover:bg-gray-600 transition-colors" data-zone="zone3" id="zone3-moisture-card">
+                            <span class="status-indicator absolute top-2 right-2 w-3 h-3 rounded-full bg-red-500"></span>
                             <h4 class="text-base font-semibold text-gray-100">Vegetable Patch</h4>
-                            <p class="text-sm text-gray-400">Moisture: 22%</p>
+                            <p class="text-sm text-gray-400">Moisture: <span class="moisture-value">22%</span></p>
                         </div>
-                        <div class="relative bg-gray-700 rounded-lg p-6 text-center">
-                            <span class="absolute top-2 right-2 w-3 h-3 rounded-full bg-green-500"></span>
+                        <div class="zone-card relative bg-gray-700 rounded-lg p-6 text-center cursor-pointer hover:bg-gray-600 transition-colors" data-zone="zone4" id="zone4-moisture-card">
+                            <span class="status-indicator absolute top-2 right-2 w-3 h-3 rounded-full bg-green-500"></span>
                             <h4 class="text-base font-semibold text-gray-100">Fruit Trees</h4>
-                            <p class="text-sm text-gray-400">Moisture: 68%</p>
+                            <p class="text-sm text-gray-400">Moisture: <span class="moisture-value">68%</span></p>
                         </div>
                     </div>
                 </div>
@@ -692,7 +954,7 @@
                     </svg>
                     Back to Dashboard
                 </button>
-                <h2 class="text-3xl font-bold text-gray-100 mb-6">Flower Bed - Zone 1</h2>
+                <h2 id="zoneDetailTitle" class="text-3xl font-bold text-gray-100 mb-6">Flower Bed - Zone 1</h2>
                 
                 <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
                     <!-- Sensor Reading Card -->
@@ -762,6 +1024,15 @@
             <p class="text-sm text-gray-400 mb-6">Hydro-AI continuously monitors all components and provides real-time health checks and suggestions.</p>
             <div id="diagnosticsContainer" class="flex flex-col space-y-4">
                 <!-- Diagnostics messages will be dynamically added here -->
+            </div>
+        </div>
+
+        <!-- Crops Tab -->
+        <div id="crops-tab" class="tab-content hidden">
+            <h3 class="text-2xl font-bold text-gray-100 mb-4">What's Growing?</h3>
+            <p class="text-sm text-gray-400 mb-6">Here are the crops in your garden and their specific care needs.</p>
+            <div id="cropsContainer" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                <!-- Crop cards will be dynamically added here -->
             </div>
         </div>
         
