@@ -9,7 +9,7 @@
     <!-- Firebase Libraries -->
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
-        import { getAuth, signInWithCustomToken, signInAnonymously, onAuthStateChanged, signOut, signInWithEmailAndPassword, createUserWithEmailAndPassword, sendPasswordResetEmail, GoogleAuthProvider, signInWithPopup, PhoneAuthProvider, RecaptchaVerifier } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getAuth, signInWithCustomToken, signInAnonymously, onAuthStateChanged, signOut, signInWithEmailAndPassword, createUserWithEmailAndPassword, sendPasswordResetEmail, GoogleAuthProvider, signInWithPopup } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
         import { getFirestore, doc, getDoc, setDoc, onSnapshot, collection, query, addDoc, serverTimestamp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
         import { setLogLevel } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
         
@@ -766,25 +766,5 @@
         </div>
         
     </div>
-
-    <!-- Footer -->
-    <!-- <footer class="mt-8 w-full text-center text-gray-500 text-sm">
-        <hr class="border-gray-800 mb-4" />
-        <div class="flex flex-wrap justify-center gap-6 mb-4">
-            <a href="#" class="text-gray-400 hover:text-green-500 transition-colors">
-                <svg class="w-6 h-6" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path d="M8.29 22.02c.62.2.82-.04.82-.25v-2.18c0-.62-.25-.75-.5-1.02 2.37-.26 4.86-1.18 4.86-5.26 0-1.16-.4-2.13-1.05-2.88.1-.25.46-1.37-.1-2.84 0 0-.85-.28-2.78 1.1-.8-.22-1.65-.33-2.5-.33-1.85 0-3.7.35-4.5 1.1-.98-1.42-1.63-1.6-1.63-1.6-.5 1.35-.1 2.47-.1 2.84-.66.75-1.06 1.72-1.06 2.88 0 4.08 2.49 5.0 4.86 5.26-.25.27-.5.7-.5 1.02v2.18c0 .21.2.45.82.25 4.38-1.5 7.54-5.45 7.54-10.02 0-5.6-4.57-10.18-10.18-10.18s-10.18 4.58-10.18 10.18c0 4.57 3.16 8.52 7.54 10.02z"/></svg>
-            </a>
-            <a href="#" class="text-gray-400 hover:text-green-500 transition-colors">
-                <svg class="w-6 h-6" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2.163c3.275 0 3.684.01 4.978.073a4.791 4.791 0 011.66.307 2.76 2.76 0 011.688 1.688 4.79 4.79 0 01.307 1.66c.063 1.294.073 1.703.073 4.978s-.01 3.684-.073 4.978a4.791 4.791 0 01-.307 1.66 2.76 2.76 0 01-1.688 1.688 4.79 4.79 0 01-1.66.307c-1.294.063-1.703.073-4.978.073s-3.684-.01-4.978-.073a4.791 4.791 0 01-1.66-.307 2.76 2.76 0 01-1.688-1.688 4.79-4.79 0 01-.307-1.66c-.063-1.294-.073-1.703-.073-4.978s.01-3.684.073-4.978a4.791 4.791 0 01.307-1.66 2.76 2.76 0 011.688-1.688 4.79-4.79 0 011.66-.307c1.294-.063 1.703-.073 4.978-.073zM12 11.237a.763.763 0 11.001 1.527.763.763 0 01-.001-1.527zM18.3 7.8a.751.751 0 00-.75-.75.751.751 0 00-.75.75.751.751 0 00.75.75.751.751 0 00.75-.75z"/></svg>
-            </a>
-            <a href="#" class="text-gray-400 hover:text-green-500 transition-colors">
-                <svg class="w-6 h-6" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path d="M23.953 4.57a10 10 0 01-2.825.775 4.958 4.958 0 002.163-2.723c-.951.564-2.005.974-3.127 1.185a4.912 4.912 0 00-8.384 4.482c-.9-.49-1.76-.996-2.613-1.503a4.896 4.896 0 00-6.173 5.378c.321 1.184.97 2.17 1.84 2.946a4.896 4.896 0 01-2.228-.616v.061a4.91 4.91 0 003.951 4.827 4.981 4.981 0 01-2.224.085c.613 1.905 2.345 3.29 4.412 3.329-1.928 1.51-4.364 2.417-7.014 2.417a9.756 9.756 0 001.373.08c1.868 0 3.65-.63 5.09-1.84a13.882 13.882 0 005.5-5.996c.032-.128.053-.257.085-.386-.145.025-.29.053-.437.075a.5.5 0 01-.132.025a4.868 4.868 0 001.196-1.554 4.897 4.897 0 00-3.321-7.295z"/></svg>
-            </a>
-        </div>
-        <div class="flex flex-col items-center">
-            <p>&copy; 2024 Hydro-AI. All Rights Reserved.</p>
-            <p>Contact: your-email@example.com | +1 (123) 456-7890</p>
-        </div>
-    </footer> -->
 </body>
 </html>
