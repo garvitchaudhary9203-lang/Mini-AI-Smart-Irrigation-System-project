@@ -16,17 +16,15 @@
         // Firestore is needed for persistent storage. Using a hardcoded app ID for demonstration.
         // In a real app, these values would be provided by the environment.
         const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
-       // For Firebase JS SDK v7.20.0 and later, measurementId is optional
         const firebaseConfig = {
-        apiKey: "AIzaSyCvKwpHAvcu9QSJDjqf_zdiTSGDpdNrJbw",
-        authDomain: "mini-ai-irrigation-system.firebaseapp.com",
-        projectId: "mini-ai-irrigation-system",
-        storageBucket: "mini-ai-irrigation-system.firebasestorage.app",
-        messagingSenderId: "205361105789",
-        appId: "1:205361105789:web:4c75a11eab0f8263265a14",
-        measurementId: "G-KM4XGDFSDR"
+            apiKey: "AIzaSyCvKwpHAvcu9QSJDjqf_zdiTSGDpdNrJbw",
+            authDomain: "mini-ai-irrigation-system.firebaseapp.com",
+            projectId: "mini-ai-irrigation-system",
+            storageBucket: "mini-ai-irrigation-system.firebasestorage.app",
+            messagingSenderId: "205361105789",
+            appId: "1:205361105789:web:4c75a11eab0f8263265a14",
+            measurementId: "G-KM4XGDFSDR"
         };
-
         const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? initialAuthToken : null;
         
         let db;
@@ -48,7 +46,9 @@
                     if (user) {
                         userId = user.uid;
                         console.log("User is signed in:", userId);
-                        document.getElementById('userIdDisplay').textContent = `User: ${userId}`;
+                        // Format UID for a more unique appearance
+                        const formattedUid = `${userId.substring(0, 4)}-${Math.floor(Math.random() * 9000) + 1000}-!@#*`;
+                        document.getElementById('userIdDisplay').textContent = `User: ${formattedUid}`;
                         document.getElementById('authContainer').classList.add('hidden');
                         document.getElementById('appContainer').classList.remove('hidden');
 
@@ -298,7 +298,7 @@
             const inputLower = userInput.toLowerCase();
 
             if (inputLower.includes("hello") || inputLower.includes("hi")) {
-                response = "Hello! How can I help you with your irrigation system today?";
+                response = "Hello! I am Hydro-AI, your smart irrigation assistant. How can I help?";
             } else if (inputLower.includes("moisture") || inputLower.includes("soil")) {
                 response = `Current soil moisture is ${currentSensorData.moisture}%.`;
             } else if (inputLower.includes("temperature") || inputLower.includes("temp")) {
@@ -422,30 +422,8 @@
             }
         }
         
-        async function handlePhoneLogin(e) {
-            e.preventDefault();
-            const phoneNumber = document.getElementById('phoneInput').value;
-            window.recaptchaVerifier = new RecaptchaVerifier(auth, 'recaptcha-container', {
-                'size': 'invisible',
-                'callback': (response) => {
-                    // reCAPTCHA solved, allow signInWithPhoneNumber.
-                }
-            });
-            try {
-                const phoneProvider = new PhoneAuthProvider(auth);
-                const verificationId = await phoneProvider.verifyPhoneNumber(phoneNumber, window.recaptchaVerifier);
-                const verificationCode = prompt("Please enter the OTP sent to your phone:");
-                const credential = phoneProvider.credential(verificationId, verificationCode);
-                await signInWithCredential(auth, credential);
-                showMessage("Logged in with phone number successfully!", "success");
-            } catch (error) {
-                console.error("Phone login error:", error);
-                showMessage(`Phone login failed: ${error.message}`, "error");
-            }
-        }
-
         async function handlePasswordReset() {
-            const email = prompt("Please enter your email address to reset your password:");
+            const email = document.getElementById('loginEmail').value;
             if (email) {
                 try {
                     await sendPasswordResetEmail(auth, email);
@@ -454,6 +432,8 @@
                     console.error("Password reset error:", error);
                     showMessage(`Password reset failed: ${error.message}`, "error");
                 }
+            } else {
+                showMessage("Please enter your email in the login form to reset your password.", "error");
             }
         }
 
@@ -507,7 +487,6 @@
             document.getElementById('login-form').addEventListener('submit', handleEmailLogin);
             document.getElementById('signup-form').addEventListener('submit', handleEmailSignUp);
             document.getElementById('google-login-btn').addEventListener('click', handleGoogleLogin);
-            document.getElementById('phone-login-form').addEventListener('submit', handlePhoneLogin);
             document.getElementById('forgot-password-link').addEventListener('click', handlePasswordReset);
             document.getElementById('logout-btn').addEventListener('click', handleSignOut);
             
@@ -569,18 +548,6 @@
                     </svg>
                     <span>Sign in with Google</span>
                 </button>
-                <div class="text-center my-4 text-gray-500">
-                    OR
-                </div>
-                <form id="phone-login-form">
-                    <div class="mb-4">
-                        <input type="tel" id="phoneInput" placeholder="Phone Number" class="w-full p-3 rounded-lg bg-gray-800 text-gray-200 border border-gray-700 focus:outline-none focus:ring-2 focus:ring-green-500" required>
-                    </div>
-                    <div id="recaptcha-container"></div>
-                    <button type="submit" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 rounded-lg transition-colors">
-                        Sign in with Phone
-                    </button>
-                </form>
             </div>
             <div class="text-center mt-6 text-gray-400">
                 Don't have an account? <a href="#" id="showSignup" class="text-green-400 font-semibold hover:underline">Sign up</a>
@@ -801,7 +768,7 @@
     </div>
 
     <!-- Footer -->
-<!--     <footer class="mt-8 w-full max-w-4xl text-center text-gray-500 text-sm">
+    <!-- <footer class="mt-8 w-full text-center text-gray-500 text-sm">
         <hr class="border-gray-800 mb-4" />
         <div class="flex flex-wrap justify-center gap-6 mb-4">
             <a href="#" class="text-gray-400 hover:text-green-500 transition-colors">
@@ -814,9 +781,10 @@
                 <svg class="w-6 h-6" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path d="M23.953 4.57a10 10 0 01-2.825.775 4.958 4.958 0 002.163-2.723c-.951.564-2.005.974-3.127 1.185a4.912 4.912 0 00-8.384 4.482c-.9-.49-1.76-.996-2.613-1.503a4.896 4.896 0 00-6.173 5.378c.321 1.184.97 2.17 1.84 2.946a4.896 4.896 0 01-2.228-.616v.061a4.91 4.91 0 003.951 4.827 4.981 4.981 0 01-2.224.085c.613 1.905 2.345 3.29 4.412 3.329-1.928 1.51-4.364 2.417-7.014 2.417a9.756 9.756 0 001.373.08c1.868 0 3.65-.63 5.09-1.84a13.882 13.882 0 005.5-5.996c.032-.128.053-.257.085-.386-.145.025-.29.053-.437.075a.5.5 0 01-.132.025a4.868 4.868 0 001.196-1.554 4.897 4.897 0 00-3.321-7.295z"/></svg>
             </a>
         </div>
-        <p>&copy; 2024 Hydro-AI. All Rights Reserved.</p>
-        <p>Contact: your-email@example.com | +1 (123) 456-7890</p>
+        <div class="flex flex-col items-center">
+            <p>&copy; 2024 Hydro-AI. All Rights Reserved.</p>
+            <p>Contact: your-email@example.com | +1 (123) 456-7890</p>
+        </div>
     </footer> -->
 </body>
 </html>
-
