@@ -25,6 +25,8 @@
             appId: "1:205361105789:web:4c75a11eab0f8263265a14",
             measurementId: "G-KM4XGDFSDR"
         };
+        const apiKey = "AIzaSyCJ_GWFHwPvDAJWTfwYYrmbh4MIylx5_lA"; // Keep this blank. It will be provided by the system.
+const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-05-20:generateContent?key=${apiKey}`;
         const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? initialAuthToken : null;
         
         let db;
@@ -146,18 +148,20 @@
             });
         }
 
-        async function savePumpStatus(status) {
-            if (!db || !userId) return console.error("Database not initialized or user not logged in.");
-            const settingsDocRef = doc(db, `/artifacts/${appId}/users/${userId}/data/settings`);
-            try {
-                isPumpOn = (status === "on");
-                await setDoc(settingsDocRef, { pumpStatus: status, lastManualOverride: serverTimestamp() }, { merge: true });
-                showMessage(`Pump turned ${status}.`, "success");
-            } catch (e) {
-                console.error("Error updating pump status:", e);
-                showMessage("Failed to update pump status.", "error");
-            }
-        }
+        async function savePumpStatus(status){
+    if (!db || !userId) {
+        console.error("Database not initialized or user not logged in.");
+        return;
+    }
+    const settingsDocRef = doc(db, `/artifacts/${appId}/users/${userId}/data/settings`);
+    try {
+        isPumpOn = (status === "on");
+        await setDoc(settingsDocRef, { pumpStatus: status, lastManualOverride: serverTimestamp() }, { merge: true });
+        // The real-time listener will update the UI, so no need for showMessage here.
+    } catch (e) {
+        console.error("Error updating pump status:", e);
+    }
+}
 
         async function saveAiMode(mode) {
             if (!db || !userId) return console.error("Database not initialized or user not logged in.");
@@ -378,29 +382,160 @@
             messagesContainer.scrollTop = messagesContainer.scrollHeight; 
         }
 
-        async function generateAiResponse(userInput) {
-            let response = "I'm sorry, I can only provide information about the smart irrigation system. Please ask me about current conditions or system status.";
-            const inputLower = userInput.toLowerCase();
+     async function generateAiResponse(userInput) {
+    const thinkingMessage = "Hydro-AI is thinking...";
+    addMessage(thinkingMessage, false);
 
-            if (inputLower.includes("hello") || inputLower.includes("hi")) {
-                response = "Hello! I am Hydro-AI, your smart irrigation assistant. How can I help?";
-            } else if (inputLower.includes("moisture") || inputLower.includes("soil")) {
-                response = `Current soil moisture is ${sensorData[activeZone].moisture}%.`;
-            } else if (inputLower.includes("temperature") || inputLower.includes("temp")) {
-                response = `Current temperature is ${sensorData[activeZone].temperature}°C.`;
-            } else if (inputLower.includes("humidity")) {
-                response = `Current humidity is ${sensorData[activeZone].humidity}%.`;
-            } else if (inputLower.includes("weather")) {
-                response = `The current weather is ${currentWeatherData.condition}, with a temperature of ${currentWeatherData.temperature}°C.`;
-            } else if (inputLower.includes("pump") || inputLower.includes("watering")) {
-                response = `The pump is currently ${isPumpOn ? 'ON and actively watering' : 'OFF'}.`;
-            } else if (inputLower.includes("thanks") || inputLower.includes("thank you")) {
-                response = "You're welcome! Let me know if you need anything else.";
+    const systemPrompt = `You are a helpful AI assistant for a smart irrigation system named Hydro-AI. 
+    Your primary function is to provide information about the system's current status, sensor readings, and to process commands to update the system.
+    You know about the different sections of the app:
+    - **Dashboard**: Shows a high-level overview.
+    - **Diagnostics**: Provides a health report and identifies problems.
+    - **What's Growing?**: Gives information on the crops in each zone.
+    
+    You have access to three tools: 
+    1. 'getZoneStatus' which provides real-time data for a specific irrigation zone.
+    2. 'updateSensorData' which updates the data by generating new simulated values.
+    3. 'setPumpStatus' which can turn the water pump on or off.
+    4. 'getDiagnosticsSummary' which gives a summary of current system problems.
+    5. 'getCropInformation' which provides details about a specific crop.
+
+    - When the user asks about the status of a specific zone (e.g., 'vegetable patch' or 'zone 2'), you MUST use the 'getZoneStatus' tool with the correct zone ID.
+    - When the user asks to update, change, or refresh the values, you MUST use the 'updateSensorData' tool.
+    - When the user gives a command to turn the pump 'on' or 'off', you MUST use the 'setPumpStatus' tool.
+    - When the user asks about system diagnostics or problems, you MUST use the 'getDiagnosticsSummary' tool.
+    - When the user asks about a specific crop, you MUST use the 'getCropInformation' tool with the crop's name.
+
+    Do not make up any information. If a question is outside the scope of the irrigation system status or control, acknowledge that you can't help with that.`;
+
+    const payload = {
+        systemInstruction: {
+            parts: [{ text: systemPrompt }]
+        },
+        contents: [{ parts: [{ text: userInput }] }],
+        tools: [
+            {
+                "functionDeclarations": [
+                    {
+                        "name": "getZoneStatus",
+                        "description": "Get the current status of a specific irrigation zone. The available zones are 'zone1', 'zone2', 'zone3', and 'zone4'.",
+                        "parameters": {
+                            "type": "OBJECT",
+                            "properties": {
+                                "zoneId": {
+                                    "type": "STRING",
+                                    "description": "The ID of the irrigation zone (e.g., 'zone1', 'zone2')."
+                                }
+                            },
+                            "required": ["zoneId"]
+                        }
+                    },
+                    {
+                        "name": "updateSensorData",
+                        "description": "Updates the sensor data by generating new simulated values. Use this when the user asks to update or change the readings.",
+                        "parameters": {
+                            "type": "OBJECT",
+                            "properties": {}
+                        }
+                    },
+                    {
+                        "name": "setPumpStatus",
+                        "description": "Sets the status of the water pump to 'on' or 'off'.",
+                        "parameters": {
+                            "type": "OBJECT",
+                            "properties": {
+                                "status": {
+                                    "type": "STRING",
+                                    "description": "The desired status of the pump ('on' or 'off')."
+                                }
+                            },
+                            "required": ["status"]
+                        }
+                    },
+                    {
+                        "name": "getDiagnosticsSummary",
+                        "description": "Provides a summary of any problems detected by the system.",
+                        "parameters": {
+                            "type": "OBJECT",
+                            "properties": {}
+                        }
+                    },
+                    {
+                        "name": "getCropInformation",
+                        "description": "Provides information about a specific crop being grown. The available crops are 'Lavender', 'Zoysia Grass', 'Tomatoes', and 'Apple Trees'.",
+                        "parameters": {
+                            "type": "OBJECT",
+                            "properties": {
+                                "cropName": {
+                                    "type": "STRING",
+                                    "description": "The name of the crop (e.g., 'Lavender')."
+                                }
+                            },
+                            "required": ["cropName"]
+                        }
+                    }
+                ]
             }
+        ]
+    };
 
-            addMessage(response, false);
+    try {
+        const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-05-20:generateContent?key=${apiKey}`;
+        const response = await fetch(url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+
+        if (!response.ok) {
+            throw new Error(`API call failed with status: ${response.status}`);
         }
 
+        const result = await response.json();
+        const candidate = result?.candidates?.[0];
+        const functionCall = candidate?.content?.parts?.[0]?.functionCall;
+        
+        const messagesContainer = document.getElementById('chatMessages');
+        messagesContainer.removeChild(messagesContainer.lastChild);
+        
+        if (functionCall) {
+            if (functionCall.name === "getZoneStatus") {
+                const zoneId = functionCall.args.zoneId;
+                const status = {
+                    moisture: sensorData[zoneId].moisture,
+                    temperature: sensorData[zoneId].temperature,
+                    humidity: sensorData[zoneId].humidity,
+                };
+                addMessage(`The current status for the ${sensorData[zoneId].crop} zone is:
+- Soil Moisture: ${status.moisture}%
+- Temperature: ${status.temperature}°C
+- Humidity: ${status.humidity}%`, false);
+            } else if (functionCall.name === "updateSensorData") {
+                await triggerSimulatedSensorUpdate();
+                addMessage("I have updated the sensor values. The dashboard is now showing the new readings.", false);
+            } else if (functionCall.name === "setPumpStatus") {
+                const pumpStatus = functionCall.args.status;
+                await savePumpStatus(pumpStatus);
+                addMessage(`The water pump has been turned ${pumpStatus}.`, false);
+            } else if (functionCall.name === "getDiagnosticsSummary") {
+                addMessage(getDiagnosticsSummary(), false);
+            } else if (functionCall.name === "getCropInformation") {
+                const cropName = functionCall.args.cropName;
+                addMessage(getCropInformation(cropName), false);
+            }
+        } else {
+            const aiResponse = candidate?.content?.parts?.[0]?.text;
+            if (aiResponse) {
+                addMessage(aiResponse, false);
+            } else {
+                addMessage("I'm sorry, I couldn't generate a response. Please try again.", false);
+            }
+        }
+    } catch (error) {
+        console.error("Error calling Gemini API:", error);
+        addMessage("There was an error connecting to the AI. Please try again later.", false);
+    }
+}
         function handleChatInput() {
             const chatInput = document.getElementById('chatInput');
             const userInput = chatInput.value.trim();
@@ -440,7 +575,30 @@
                 }
             }, 5000); 
         }
+        function getDiagnosticsSummary() {
+    let problemZones = [];
+    for (const zone in sensorData) {
+        const data = sensorData[zone];
+        if (data.moisture < 20 || data.moisture > 80) {
+            problemZones.push(data.crop);
+        }
+    }
 
+    if (problemZones.length > 0) {
+        return `There are some issues detected. Low or high moisture levels were found in the following zones: ${problemZones.join(', ')}. Please check the Diagnostics tab for more details.`;
+    } else {
+        return "All systems are running normally. No issues have been detected.";
+    }
+}
+
+function getCropInformation(cropName) {
+    const crop = crops[cropName];
+    if (crop) {
+        return `Here is some information about ${cropName}: ${crop.description}`;
+    } else {
+        return `I'm sorry, I don't have information on a crop named ${cropName}. The available crops are Lavender, Zoysia Grass, Tomatoes, and Apple Trees.`;
+    }
+}
         function showMessage(msg, type = "info") {
             const messageBox = document.getElementById('statusMessage');
             messageBox.textContent = msg;
