@@ -5,15 +5,16 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Hydro-AI:SIS</title>
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M12 3v18M12 3c-1.105 0-2 .895-2 2s.895 2 2 2h0c1.105 0 2-.895 2-2s-.895-2-2-2zM4 14h16m-8 0a4 4 0 100-8 4 4 0 000 8z'/%3E%3C/svg%3E" type="image/svg+xml">
-    <!-- Tailwind CSS CDN -->
     <script src="https://cdn.tailwindcss.com"></script>
-    <!-- Firebase Libraries -->
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
         import { getAuth, signInWithCustomToken, signInAnonymously, onAuthStateChanged, signOut, signInWithEmailAndPassword, createUserWithEmailAndPassword, sendPasswordResetEmail, GoogleAuthProvider, signInWithPopup } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
         import { getFirestore, doc, getDoc, setDoc, onSnapshot, collection, query, addDoc, serverTimestamp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
         import { setLogLevel } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
-        
+        // --- NEW: Realtime Database Imports for ESP32 Data ---
+        import { getDatabase, ref, onValue } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-database.js";
+        // -----------------------------------------------------
+
         // Firestore is needed for persistent storage. Using a hardcoded app ID for demonstration.
         // In a real app, these values would be provided by the environment.
         const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
@@ -24,13 +25,16 @@
             storageBucket: "mini-ai-irrigation-system.firebasestorage.app",
             messagingSenderId: "205361105789",
             appId: "1:205361105789:web:4c75a11eab0f8263265a14",
-            measurementId: "G-KM4XGDFSDR"
+            measurementId: "G-KM4XGDFSDR",
+            // --- IMPORTANT: ADD YOUR REALTIME DATABASE URL HERE ---
+            databaseURL: "https://mini-ai-irrigation-system-default-rtdb.firebaseio.com/", 
         };
         const apiKey = "AIzaSyCJ_GWFHwPvDAJWTfwYYrmbh4MIylx5_lA"; // Keep this blank. It will be provided by the system.
-const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-05-20:generateContent?key=${apiKey}`;
+        const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-05-20:generateContent?key=${apiKey}`;
         const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? initialAuthToken : null;
         
         let db;
+        let rtdb; // <--- NEW RTDB VARIABLE
         let auth;
         let userId;
         let sensorData = {
@@ -68,6 +72,7 @@ const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2
             try {
                 const app = initializeApp(firebaseConfig);
                 db = getFirestore(app);
+                rtdb = getDatabase(app); // <--- NEW: INITIALIZE RTDB
                 auth = getAuth(app);
 
                 onAuthStateChanged(auth, async (user) => {
@@ -88,6 +93,7 @@ const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2
                             });
                         }
                         setupRealtimeListeners();
+                        setupRtdbListener(); // <--- NEW: CALL RTDB LISTENER
                         startSimulation();
                     } else {
                         document.getElementById('appContainer').classList.add('hidden');
@@ -111,6 +117,34 @@ const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2
             }
         }
         
+        // NEW: Function to listen to the ESP32 data from Realtime Database
+        async function setupRtdbListener() {
+            if (!rtdb) return;
+
+            // Soil Moisture
+            onValue(ref(rtdb, "sensor/soil"), (snap) => {
+                const rawValue = snap.val();
+                // Assuming 0-4095 range from ESP32, convert to 0-100%
+                const percentage = rawValue !== null ? Math.round((1 - (rawValue / 4095)) * 100) : '--'; 
+                document.getElementById("soil").textContent = percentage > 100 ? "100%" : `${percentage}%`;
+            });
+
+            // Temperature
+            onValue(ref(rtdb, "sensor/temp"), (snap) => {
+                document.getElementById("temperature").textContent = snap.val() !== null ? `${snap.val()}°C` : '--';
+            });
+
+            // Humidity
+            onValue(ref(rtdb, "sensor/humidity"), (snap) => {
+                document.getElementById("humidity").textContent = snap.val() !== null ? `${snap.val()}%` : '--';
+            });
+
+            // Pump Status
+            onValue(ref(rtdb, "sensor/status"), (snap) => {
+                document.getElementById("status").textContent = snap.val() || 'N/A';
+            });
+        }
+
         async function setupRealtimeListeners() {
             const settingsDocRef = doc(db, `/artifacts/${appId}/users/${userId}/data/settings`);
             onSnapshot(settingsDocRef, (docSnap) => {
@@ -150,19 +184,19 @@ const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2
         }
 
         async function savePumpStatus(status){
-    if (!db || !userId) {
-        console.error("Database not initialized or user not logged in.");
-        return;
-    }
-    const settingsDocRef = doc(db, `/artifacts/${appId}/users/${userId}/data/settings`);
-    try {
-        isPumpOn = (status === "on");
-        await setDoc(settingsDocRef, { pumpStatus: status, lastManualOverride: serverTimestamp() }, { merge: true });
-        // The real-time listener will update the UI, so no need for showMessage here.
-    } catch (e) {
-        console.error("Error updating pump status:", e);
-    }
-}
+            if (!db || !userId) {
+                console.error("Database not initialized or user not logged in.");
+                return;
+            }
+            const settingsDocRef = doc(db, `/artifacts/${appId}/users/${userId}/data/settings`);
+            try {
+                isPumpOn = (status === "on");
+                await setDoc(settingsDocRef, { pumpStatus: status, lastManualOverride: serverTimestamp() }, { merge: true });
+                // The real-time listener will update the UI, so no need for showMessage here.
+            } catch (e) {
+                console.error("Error updating pump status:", e);
+            }
+        }
 
         async function saveAiMode(mode) {
             if (!db || !userId) return console.error("Database not initialized or user not logged in.");
@@ -918,7 +952,6 @@ function getCropInformation(cropName) {
 </head>
 <body data-theme="dark" class="min-h-screen p-4 sm:p-8 flex items-center justify-center">
     
-    <!-- Authentication Container (shown by default) -->
     <div id="authContainer" class="w-full max-w-sm bg-gray-900 rounded-2xl p-6 sm:p-10 shadow-lg border border-gray-800">
         <div id="login" class="auth-view">
             <h2 class="text-3xl font-bold text-center text-gray-100 mb-6">Log In</h2>
@@ -969,9 +1002,7 @@ function getCropInformation(cropName) {
         </div>
     </div>
 
-    <!-- Main App Container (hidden by default) -->
     <div id="appContainer" class="hidden w-full max-w-4xl bg-gray-900 rounded-2xl p-6 sm:p-10 shadow-lg border border-gray-800">
-        <!-- Header -->
         <header class="flex flex-col sm:flex-row items-start sm:items-center justify-between mb-8">
             <div class="flex items-center gap-4 mb-4 sm:mb-0">
                 <div class="p-2 bg-green-500 rounded-full">
@@ -997,10 +1028,8 @@ function getCropInformation(cropName) {
             </div>
         </header>
 
-        <!-- Status Message -->
         <div id="statusMessage" class="opacity-0 transition-opacity duration-300"></div>
 
-        <!-- Tab Navigation -->
         <div class="flex border-b border-gray-700 mb-6">
             <button id="tab-btn-dashboard" class="tab-button flex-1 text-center py-3 text-lg font-semibold text-gray-400 hover:text-gray-200 hover:border-gray-500">Dashboard</button>
             <button id="tab-btn-assistant" class="tab-button flex-1 text-center py-3 text-lg font-semibold text-gray-400 hover:text-gray-200 hover:border-gray-500">AI Assistant</button>
@@ -1008,7 +1037,6 @@ function getCropInformation(cropName) {
             <button id="tab-btn-crops" class="tab-button flex-1 text-center py-3 text-lg font-semibold text-gray-400 hover:text-gray-200 hover:border-gray-500">What's Growing?</button>
         </div>
 
-        <!-- Dashboard Content -->
         <div id="dashboard-tab" class="tab-content view">
             <div id="dashboardView" class="view">
                 <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
@@ -1038,6 +1066,15 @@ function getCropInformation(cropName) {
                     </div>
                 </div>
 
+                <div class="bg-gray-800 p-6 rounded-xl shadow-inner border border-green-500 mb-8">
+                    <h3 class="text-xl font-bold text-green-400 mb-4">⭐ ESP32 RAW Live Feed ⭐</h3>
+                    <div class="space-y-2 text-gray-400">
+                        <p>Soil Moisture: <span id="soil" class="text-gray-100 font-bold">...Loading</span></p>
+                        <p>Temperature: <span id="temperature" class="text-gray-100 font-bold">...Loading</span></p>
+                        <p>Humidity: <span id="humidity" class="text-gray-100 font-bold">...Loading</span></p>
+                        <p>Pump Status: <span id="status" class="text-gray-100 font-bold">...Loading</span></p>
+                    </div>
+                </div>
                 <div class="bg-gray-800 p-6 rounded-xl shadow-inner border border-gray-700 mb-8">
                     <h3 class="text-lg font-semibold text-gray-100 mb-4">Garden Zone</h3>
                     <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
@@ -1098,7 +1135,6 @@ function getCropInformation(cropName) {
                 </div>
             </div>
 
-            <!-- Zone Detail View (Hidden by default) -->
             <div id="zoneDetailView" class="view hidden">
                 <button id="showDashboard" class="text-gray-400 hover:text-gray-200 mb-6 flex items-center gap-2">
                     <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
@@ -1109,7 +1145,6 @@ function getCropInformation(cropName) {
                 <h2 id="zoneDetailTitle" class="text-3xl font-bold text-gray-100 mb-6">Flower Bed - Zone 1</h2>
                 
                 <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
-                    <!-- Sensor Reading Card -->
                     <div class="bg-gray-800 p-6 rounded-xl shadow-inner border border-gray-700">
                         <h3 class="text-sm text-gray-400 mb-2">Soil Moisture</h3>
                         <div class="flex items-end gap-2 mb-2">
@@ -1120,14 +1155,12 @@ function getCropInformation(cropName) {
                         </div>
                     </div>
                     
-                    <!-- Temperature Card -->
                     <div class="bg-gray-800 p-6 rounded-xl shadow-inner border border-gray-700">
                         <h3 class="text-sm text-gray-400 mb-2">Temperature</h3>
                         <span id="tempValue" class="text-4xl font-extrabold text-gray-100">25°C</span>
                         <p class="text-sm text-gray-500 mt-1">Optimal for this crop</p>
                     </div>
                     
-                    <!-- Humidity Card -->
                     <div class="bg-gray-800 p-6 rounded-xl shadow-inner border border-gray-700">
                         <h3 class="text-sm text-gray-400 mb-2">Humidity</h3>
                         <span id="humidityValue" class="text-4xl font-extrabold text-gray-100">65%</span>
@@ -1135,7 +1168,6 @@ function getCropInformation(cropName) {
                     </div>
                 </div>
                 
-                <!-- Historical Data (Graph Placeholder) -->
                 <div class="bg-gray-800 p-6 rounded-xl shadow-inner border border-gray-700">
                     <h3 class="text-lg font-semibold text-gray-100 mb-4">Moisture Trends (Past 7 Days)</h3>
                     <div class="w-full h-48 bg-gray-700 rounded-lg flex items-center justify-center text-gray-500 italic">
@@ -1145,11 +1177,9 @@ function getCropInformation(cropName) {
             </div>
         </div>
         
-        <!-- AI Assistant Tab -->
         <div id="assistant-tab" class="tab-content hidden">
             <div class="flex flex-col h-[60vh] max-h-[60vh] bg-gray-800 rounded-xl shadow-inner border border-gray-700">
                 <div id="chatMessages" class="flex-1 p-6 overflow-y-auto flex flex-col space-y-3">
-                    <!-- Chat messages will be appended here -->
                     <div class="p-3 rounded-lg max-w-[80%] bg-gray-700 text-gray-200 mr-auto">
                         Hello! I am Hydro-AI, your smart irrigation assistant. How can I help?
                     </div>
@@ -1170,22 +1200,18 @@ function getCropInformation(cropName) {
             </div>
         </div>
         
-        <!-- Diagnostics Tab -->
         <div id="diagnostics-tab" class="tab-content hidden">
             <h3 class="text-2xl font-bold text-gray-100 mb-4">System Health & Diagnostics</h3>
             <p class="text-sm text-gray-400 mb-6">Hydro-AI continuously monitors all components and provides real-time health checks and suggestions.</p>
             <div id="diagnosticsContainer" class="flex flex-col space-y-4">
-                <!-- Diagnostics messages will be dynamically added here -->
-            </div>
+                </div>
         </div>
 
-        <!-- Crops Tab -->
         <div id="crops-tab" class="tab-content hidden">
             <h3 class="text-2xl font-bold text-gray-100 mb-4">What's Growing?</h3>
             <p class="text-sm text-gray-400 mb-6">Here are the crops in your garden and their specific care needs.</p>
             <div id="cropsContainer" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-                <!-- Crop cards will be dynamically added here -->
-            </div>
+                </div>
         </div>
         
     </div>
