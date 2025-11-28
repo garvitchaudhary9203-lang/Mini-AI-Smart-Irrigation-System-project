@@ -5,9 +5,10 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Hydro-AI:SIS</title>
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M12 3v18M12 3c-1.105 0-2 .895-2 2s.895 2 2 2h0c1.105 0 2-.895 2-2s-.895-2-2-2zM4 14h16m-8 0a4 4 0 100-8 4 4 0 000 8z'/%3E%3C/svg%3E" type="image/svg+xml">
-    <!-- Tailwind CSS CDN -->
     <script src="https://cdn.tailwindcss.com"></script>
-    <!-- Firebase Libraries -->
+    
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.2.0/dist/tf.min.js"></script>
+
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
         import { getAuth, signInWithCustomToken, signInAnonymously, onAuthStateChanged, signOut, signInWithEmailAndPassword, createUserWithEmailAndPassword, sendPasswordResetEmail, GoogleAuthProvider, signInWithPopup } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
@@ -17,8 +18,6 @@
         import { getDatabase, ref, onValue } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-database.js";
         // -----------------------------------------------------
 
-        // Firestore is needed for persistent storage. Using a hardcoded app ID for demonstration.
-        // In a real app, these values would be provided by the environment.
         const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
         const firebaseConfig = {
             apiKey: "AIzaSyCvKwpHAvcu9QSJDjqf_zdiTSGDpdNrJbw",
@@ -28,15 +27,14 @@
             messagingSenderId: "205361105789",
             appId: "1:205361105789:web:4c75a11eab0f8263265a14",
             measurementId: "G-KM4XGDFSDR",
-            // --- UPDATED: Realtime Database URL ---
             databaseURL: "https://mini-ai-irrigation-system-default-rtdb.firebaseio.com/", 
         };
-        const apiKey = "AIzaSyCJ_GWFHwPvDAJWTfwYYrmbh4MIylx5_lA"; // Keep this blank. It will be provided by the system.
+        const apiKey = "AIzaSyCJ_GWFHwPvDAJWTfwYYrmbh4MIylx5_lA"; 
         const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-05-20:generateContent?key=${apiKey}`;
         const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? initialAuthToken : null;
         
         let db;
-        let rtdb; // Realtime Database handle
+        let rtdb; 
         let auth;
         let userId;
         let sensorData = {
@@ -48,6 +46,13 @@
         let currentWeatherData = { temperature: 25, humidity: 65, condition: "Partly Cloudy" };
         let isPumpOn = false;
         let activeZone = 'zone1';
+
+        // --- NEW: TensorFlow.js Model Integration Variables ---
+        let tfjsModel;
+        // 👇👇👇 YOUR SCALER PARAMETERS (Mean, Std Dev) PASTE HERE 👇👇👇
+        const SCALER_MEAN = [45.4859625, 22.5528125, 44.98325]; 
+        const SCALER_STD = [26.002991230790848, 13.259638412861953, 14.716702057102202];   
+        // 👆👆👆 THIS IS CRUCIAL FOR MODEL ACCURACY 👆👆👆
 
         setLogLevel('debug');
 
@@ -69,6 +74,53 @@
                 description: 'Established trees have deep roots and require less frequent but deep watering. Proper irrigation is crucial for fruit development.'
             }
         };
+
+        // --- NEW FUNCTION: AI Model Prediction ---
+        async function aiPredict(moisture, temperature, humidity) {
+            if (!tfjsModel) {
+                console.error("AI Model not loaded yet. Skipping prediction.");
+                return 0; 
+            }
+
+            // 1. Prepare input as a tensor (2D array: [[moisture, temperature, humidity]])
+            const inputData = [moisture, temperature, humidity];
+            const inputTensor = tf.tensor2d([inputData]);
+
+            // 2. Normalize the data using the saved scaler parameters (StandardScaler: (X - mu) / sigma)
+            const meanTensor = tf.tensor1d(SCALER_MEAN);
+            const stdTensor = tf.tensor1d(SCALER_STD);
+            
+            const scaledInput = inputTensor.sub(meanTensor).div(stdTensor);
+
+            // 3. Make prediction
+            const prediction = tfjsModel.predict(scaledInput);
+
+            // 4. Get the output value
+            const predictionValue = (await prediction.data())[0];
+
+            // Clean up tensors to save memory
+            inputTensor.dispose();
+            meanTensor.dispose();
+            stdTensor.dispose();
+            prediction.dispose();
+            scaledInput.dispose();
+            
+            // Return 1 for PUMP ON (>0.5) and 0 for PUMP OFF (<=0.5)
+            return predictionValue > 0.5 ? 1 : 0;
+        }
+
+        // --- NEW FUNCTION: Model Loading ---
+        async function loadModel() {
+            try {
+                // Loading the model from the subfolder you converted and uploaded to GitHub
+                tfjsModel = await tf.loadLayersModel('./tfjs_model_web/model.json');
+                console.log("TensorFlow.js Model loaded successfully!");
+                showMessage("AI Model Loaded.", "success");
+            } catch (e) {
+                console.error("Failed to load TensorFlow.js model:", e);
+                showMessage("Error loading AI model. Check 'tfjs_model_web' folder path and content.", "error");
+            }
+        }
 
         async function initFirebase() {
             try {
@@ -94,6 +146,9 @@
                                 lastManualOverride: null,
                             });
                         }
+                        
+                        await loadModel(); // <-- CALL THE NEW MODEL LOADING FUNCTION HERE
+                        
                         setupRealtimeListeners(); // Firestore listener
                         setupRtdbListener();     // Realtime Database listener (for ESP32 data)
                         startSimulation();       // Starts simulated data updates
@@ -164,19 +219,18 @@
             onSnapshot(q, (snapshot) => {
                 snapshot.docChanges().forEach((change) => {
                     if (change.type === "added" || change.type === "modified") {
-                        const sensorData = change.doc.data();
+                        const sensorDataUpdate = change.doc.data();
                         const zoneId = change.doc.id;
-                        if (sensorData.moisture && sensorData.temperature && sensorData.humidity) {
-                            sensorData.moisture = sensorData.moisture > 100 ? 100 : sensorData.moisture;
-                            sensorData.temperature = sensorData.temperature > 40 ? 40 : sensorData.temperature;
-                            sensorData.humidity = sensorData.humidity > 100 ? 100 : sensorData.humidity;
-                            sensorData.moisture = sensorData.moisture < 0 ? 0 : sensorData.moisture;
-                            sensorData.temperature = sensorData.temperature < -10 ? -10 : sensorData.temperature;
-                            sensorData.humidity = sensorData.humidity < 0 ? 0 : sensorData.humidity;
+                        
+                        if (sensorDataUpdate.moisture !== undefined) {
+                            sensorDataUpdate.moisture = sensorDataUpdate.moisture > 100 ? 100 : sensorDataUpdate.moisture;
+                            sensorDataUpdate.moisture = sensorDataUpdate.moisture < 0 ? 0 : sensorDataUpdate.moisture;
                         }
-                        sensorData[zoneId] = { ...sensorData[zoneId], ...sensorData };
-                        updateSensorReadings(zoneId, sensorData);
-                        simulateAiLogic(); 
+                        
+                        sensorData[zoneId] = { ...sensorData[zoneId], ...sensorDataUpdate };
+                        updateSensorReadings(zoneId, sensorData[zoneId]);
+                        
+                        simulateAiLogic();  // Trigger AI logic on sensor update
                         updateDiagnostics();
                     }
                 });
@@ -194,7 +248,6 @@
             try {
                 isPumpOn = (status === "on");
                 await setDoc(settingsDocRef, { pumpStatus: status, lastManualOverride: serverTimestamp() }, { merge: true });
-                // The real-time listener will update the UI, so no need for showMessage here.
             } catch (e) {
                 console.error("Error updating pump status:", e);
             }
@@ -257,35 +310,39 @@
             if (moistureCard) {
                 const moistureValue = moistureCard.querySelector('.moisture-value');
                 const moistureBar = moistureCard.querySelector('.moisture-bar');
-                moistureValue.textContent = `${data.moisture}%`;
-                moistureBar.style.width = `${data.moisture}%`;
+                
+                const moisture = data.moisture !== undefined ? Math.round(data.moisture) : 0;
+                
+                moistureValue.textContent = `${moisture}%`;
+                moistureBar.style.width = `${moisture}%`;
                 
                 moistureBar.classList.remove('bg-green-500', 'bg-yellow-500', 'bg-red-500');
-                if (data.moisture > 60) moistureBar.classList.add('bg-green-500');
-                else if (data.moisture > 30) moistureBar.classList.add('bg-yellow-500');
+                if (moisture > 60) moistureBar.classList.add('bg-green-500');
+                else if (moisture > 30) moistureBar.classList.add('bg-yellow-500');
                 else moistureBar.classList.add('bg-red-500');
 
                 const statusIndicator = moistureCard.querySelector('.status-indicator');
                 statusIndicator.classList.remove('bg-green-500', 'bg-yellow-500', 'bg-red-500', 'animate-pulse');
-                if (data.moisture > 60) statusIndicator.classList.add('bg-green-500', 'animate-pulse');
-                else if (data.moisture > 30) statusIndicator.classList.add('bg-yellow-500');
+                if (moisture > 60) statusIndicator.classList.add('bg-green-500', 'animate-pulse');
+                else if (moisture > 30) statusIndicator.classList.add('bg-yellow-500');
                 else statusIndicator.classList.add('bg-red-500');
             }
 
             if (zoneId === activeZone) {
-                document.getElementById('moistureValue').textContent = `${data.moisture}%`;
-                document.getElementById('moistureBar').style.width = `${data.moisture}%`;
-                document.getElementById('moistureBar').className = `h-full rounded-full ${data.moisture > 60 ? 'bg-green-500' : data.moisture > 30 ? 'bg-yellow-500' : 'bg-red-500'}`;
-                document.getElementById('tempValue').textContent = `${data.temperature}°C`;
-                document.getElementById('humidityValue').textContent = `${data.humidity}%`;
+                const moisture = data.moisture !== undefined ? Math.round(data.moisture) : 0;
+                document.getElementById('moistureValue').textContent = `${moisture}%`;
+                document.getElementById('moistureBar').style.width = `${moisture}%`;
+                document.getElementById('moistureBar').className = `h-full rounded-full ${moisture > 60 ? 'bg-green-500' : moisture > 30 ? 'bg-yellow-500' : 'bg-red-500'}`;
+                document.getElementById('tempValue').textContent = `${data.temperature !== undefined ? Math.round(data.temperature) : '--'}°C`;
+                document.getElementById('humidityValue').textContent = `${data.humidity !== undefined ? Math.round(data.humidity) : '--'}%`;
             }
         }
 
         function updateWeatherData() {
             const conditions = ["Sunny", "Partly Cloudy", "Rain Expected", "Overcast"];
             const randomCondition = conditions[Math.floor(Math.random() * conditions.length)];
-            const randomTemp = Math.floor(Math.random() * 10) + 20; 
-            const randomHumid = Math.floor(Math.random() * 20) + 50; 
+            const randomTemp = Math.floor(Math.random() * 10) + 20;  
+            const randomHumid = Math.floor(Math.random() * 20) + 50;  
             currentWeatherData = {
                 temperature: randomTemp,
                 humidity: randomHumid,
@@ -334,37 +391,51 @@
             }
         }
 
-
+        // --- MODIFIED FUNCTION: Uses the TensorFlow.js Model ---
         async function simulateAiLogic() {
-            const aiModeToggle = document.getElementById('aiModeToggle').checked;
+            const settingsDocRef = doc(db, `/artifacts/${appId}/users/${userId}/data/settings`);
+            const settingsSnap = await getDoc(settingsDocRef);
+            const aiModeToggle = settingsSnap.data().aiMode; 
+            
             if (!aiModeToggle) return;
             
-            const weather = currentWeatherData.condition;
             const recommendation = document.getElementById('aiRecommendationMessage');
-            let overallMoisture = 0;
-            let zonesNeedingAttention = [];
-
-            for (const zone in sensorData) {
-                overallMoisture += sensorData[zone].moisture;
-                if (sensorData[zone].moisture < 30) {
-                    zonesNeedingAttention.push(sensorData[zone].crop);
-                }
+            // We'll base the prediction on the actively displayed zone, or fall back to zone 1
+            const predictionZone = sensorData[activeZone] || sensorData['zone1']; 
+            
+            if (!predictionZone || predictionZone.moisture === undefined) {
+                recommendation.textContent = "**AI Prediction:** \"Waiting for initial sensor data...\"";
+                return;
             }
-            const averageMoisture = overallMoisture / Object.keys(sensorData).length;
 
+            const moisture = predictionZone.moisture;
+            const temperature = predictionZone.temperature;
+            const humidity = predictionZone.humidity;
+            
+            // 1. Get Prediction from the TensorFlow.js model
+            const predictionStatus = await aiPredict(moisture, temperature, humidity); // 1 for ON, 0 for OFF
+            const pumpAction = predictionStatus === 1 ? "on" : "off";
+            const zoneName = predictionZone.crop;
+            
+            // 2. Determine AI Message and action
             let message = "";
-            if (weather.includes("Rain Expected")) {
-                message = `The AI predicts rain. All scheduled watering has been paused.`;
-                if (isPumpOn) await savePumpStatus("off");
-            } else if (zonesNeedingAttention.length > 0) {
-                message = `Low moisture detected in ${zonesNeedingAttention.join(', ')}. AI is initiating a smart watering cycle.`;
-                if (!isPumpOn) await savePumpStatus("on");
-            } else if (averageMoisture > 75) {
-                message = `All zones are sufficiently watered. AI has turned off the pump to prevent overwatering.`;
-                if (isPumpOn) await savePumpStatus("off");
+            let action = false;
+
+            if (currentWeatherData.condition.includes("Rain Expected")) {
+                message = `The AI predicts rain. Watering paused to conserve water. Current moisture in ${zoneName}: ${Math.round(moisture)}%.`;
+                if (isPumpOn) { await savePumpStatus("off"); action = true; }
+            } else if (predictionStatus === 1) {
+                message = `Low moisture detected in **${zoneName}** (${Math.round(moisture)}%). AI recommends turning the pump **ON**.`;
+                if (!isPumpOn) { await savePumpStatus("on"); action = true; }
             } else {
-                message = `Conditions are stable. The AI is monitoring soil moisture and weather for any changes.`;
+                message = `Conditions are stable in **${zoneName}** (${Math.round(moisture)}% moisture). AI recommends keeping the pump **OFF**.`;
+                if (isPumpOn) { await savePumpStatus("off"); action = true; }
             }
+
+            if(action) {
+                 message = `AI has acted: Pump turned **${pumpAction.toUpperCase()}**. ` + message;
+            }
+
             recommendation.textContent = `**AI Prediction:** "${message}"`;
         }
         
@@ -376,20 +447,22 @@
             
             for (const zone in sensorData) {
                 const data = sensorData[zone];
-                if (data.moisture < 20) {
-                    diagnostics.push({
-                        type: 'Problem',
-                        zone: data.crop,
-                        message: `Extreme low soil moisture detected. Check the sensor and pump for Zone ${zone.replace('zone', '')}.`,
-                        color: 'bg-red-500'
-                    });
-                } else if (data.moisture > 80) {
-                    diagnostics.push({
-                        type: 'Problem',
-                        zone: data.crop,
-                        message: `High moisture detected. Check for stuck pump or excessive rain for Zone ${zone.replace('zone', '')}.`,
-                        color: 'bg-red-500'
-                    });
+                 if (data.moisture !== undefined) {
+                    if (data.moisture < 20) {
+                        diagnostics.push({
+                            type: 'Problem',
+                            zone: data.crop,
+                            message: `Extreme low soil moisture detected (${Math.round(data.moisture)}%). Check the sensor and pump for Zone ${zone.replace('zone', '')}.`,
+                            color: 'bg-red-500'
+                        });
+                    } else if (data.moisture > 80) {
+                        diagnostics.push({
+                            type: 'Problem',
+                            zone: data.crop,
+                            message: `High moisture detected (${Math.round(data.moisture)}%). Check for stuck pump or excessive rain for Zone ${zone.replace('zone', '')}.`,
+                            color: 'bg-red-500'
+                        });
+                    }
                 }
             }
 
@@ -416,163 +489,170 @@
             messageElement.className = `p-3 rounded-lg max-w-[80%] mb-3 ${isUser ? 'bg-blue-600 text-white ml-auto' : 'bg-gray-700 text-gray-200 mr-auto'}`;
             messageElement.textContent = text;
             messagesContainer.appendChild(messageElement);
-            messagesContainer.scrollTop = messagesContainer.scrollHeight; 
+            messagesContainer.scrollTop = messagesContainer.scrollHeight;  
         }
 
-     async function generateAiResponse(userInput) {
-    const thinkingMessage = "Hydro-AI is thinking...";
-    addMessage(thinkingMessage, false);
+       async function generateAiResponse(userInput) {
+            const thinkingMessage = "Hydro-AI is thinking...";
+            addMessage(thinkingMessage, false);
 
-    const systemPrompt = `You are a helpful AI assistant for a smart irrigation system named Hydro-AI. 
-    Your primary function is to provide information about the system's current status, sensor readings, and to process commands to update the system.
-    You know about the different sections of the app:
-    - **Dashboard**: Shows a high-level overview.
-    - **Diagnostics**: Provides a health report and identifies problems.
-    - **What's Growing?**: Gives information on the crops in each zone.
-    
-    You have access to three tools: 
-    1. 'getZoneStatus' which provides real-time data for a specific irrigation zone.
-    2. 'updateSensorData' which updates the data by generating new simulated values.
-    3. 'setPumpStatus' which can turn the water pump on or off.
-    4. 'getDiagnosticsSummary' which gives a summary of current system problems.
-    5. 'getCropInformation' which provides details about a specific crop.
+            const systemPrompt = `You are a helpful AI assistant for a smart irrigation system named Hydro-AI. 
+            Your primary function is to provide information about the system's current status, sensor readings, and to process commands to update the system.
+            You know about the different sections of the app:
+            - **Dashboard**: Shows a high-level overview.
+            - **Diagnostics**: Provides a health report and identifies problems.
+            - **What's Growing?**: Gives information on the crops in each zone.
+            
+            You have access to three tools: 
+            1. 'getZoneStatus' which provides real-time data for a specific irrigation zone.
+            2. 'updateSensorData' which updates the data by generating new simulated values.
+            3. 'setPumpStatus' which can turn the water pump on or off.
+            4. 'getDiagnosticsSummary' which gives a summary of current system problems.
+            5. 'getCropInformation' which provides details about a specific crop.
 
-    - When the user asks about the status of a specific zone (e.g., 'vegetable patch' or 'zone 2'), you MUST use the 'getZoneStatus' tool with the correct zone ID.
-    - When the user asks to update, change, or refresh the values, you MUST use the 'updateSensorData' tool.
-    - When the user gives a command to turn the pump 'on' or 'off', you MUST use the 'setPumpStatus' tool.
-    - When the user asks about system diagnostics or problems, you MUST use the 'getDiagnosticsSummary' tool.
-    - When the user asks about a specific crop, you MUST use the 'getCropInformation' tool with the crop's name.
+            - When the user asks about the status of a specific zone (e.g., 'vegetable patch' or 'zone 2'), you MUST use the 'getZoneStatus' tool with the correct zone ID.
+            - When the user asks to update, change, or refresh the values, you MUST use the 'updateSensorData' tool.
+            - When the user gives a command to turn the pump 'on' or 'off', you MUST use the 'setPumpStatus' tool.
+            - When the user asks about system diagnostics or problems, you MUST use the 'getDiagnosticsSummary' tool.
+            - When the user asks about a specific crop, you MUST use the 'getCropInformation' tool with the crop's name.
 
-    Do not make up any information. If a question is outside the scope of the irrigation system status or control, acknowledge that you can't help with that.`;
+            Do not make up any information. If a question is outside the scope of the irrigation system status or control, acknowledge that you can't help with that.`;
 
-    const payload = {
-        systemInstruction: {
-            parts: [{ text: systemPrompt }]
-        },
-        contents: [{ parts: [{ text: userInput }] }],
-        tools: [
-            {
-                "functionDeclarations": [
+            const payload = {
+                systemInstruction: {
+                    parts: [{ text: systemPrompt }]
+                },
+                contents: [{ parts: [{ text: userInput }] }],
+                tools: [
                     {
-                        "name": "getZoneStatus",
-                        "description": "Get the current status of a specific irrigation zone. The available zones are 'zone1', 'zone2', 'zone3', and 'zone4'.",
-                        "parameters": {
-                            "type": "OBJECT",
-                            "properties": {
-                                "zoneId": {
-                                    "type": "STRING",
-                                    "description": "The ID of the irrigation zone (e.g., 'zone1', 'zone2')."
+                        "functionDeclarations": [
+                            {
+                                "name": "getZoneStatus",
+                                "description": "Get the current status of a specific irrigation zone. The available zones are 'zone1', 'zone2', 'zone3', and 'zone4'.",
+                                "parameters": {
+                                    "type": "OBJECT",
+                                    "properties": {
+                                        "zoneId": {
+                                            "type": "STRING",
+                                            "description": "The ID of the irrigation zone (e.g., 'zone1', 'zone2')."
+                                        }
+                                    },
+                                    "required": ["zoneId"]
                                 }
                             },
-                            "required": ["zoneId"]
-                        }
-                    },
-                    {
-                        "name": "updateSensorData",
-                        "description": "Updates the sensor data by generating new simulated values. Use this when the user asks to update or change the readings.",
-                        "parameters": {
-                            "type": "OBJECT",
-                            "properties": {}
-                        }
-                    },
-                    {
-                        "name": "setPumpStatus",
-                        "description": "Sets the status of the water pump to 'on' or 'off'.",
-                        "parameters": {
-                            "type": "OBJECT",
-                            "properties": {
-                                "status": {
-                                    "type": "STRING",
-                                    "description": "The desired status of the pump ('on' or 'off')."
+                            {
+                                "name": "updateSensorData",
+                                "description": "Updates the sensor data by generating new simulated values. Use this when the user asks to update or change the readings.",
+                                "parameters": {
+                                    "type": "OBJECT",
+                                    "properties": {}
                                 }
                             },
-                            "required": ["status"]
-                        }
-                    },
-                    {
-                        "name": "getDiagnosticsSummary",
-                        "description": "Provides a summary of any problems detected by the system.",
-                        "parameters": {
-                            "type": "OBJECT",
-                            "properties": {}
-                        }
-                    },
-                    {
-                        "name": "getCropInformation",
-                        "description": "Provides information about a specific crop being grown. The available crops are 'Lavender', 'Zoysia Grass', 'Tomatoes', and 'Apple Trees'.",
-                        "parameters": {
-                            "type": "OBJECT",
-                            "properties": {
-                                "cropName": {
-                                    "type": "STRING",
-                                    "description": "The name of the crop (e.g., 'Lavender')."
+                            {
+                                "name": "setPumpStatus",
+                                "description": "Sets the status of the water pump to 'on' or 'off'.",
+                                "parameters": {
+                                    "type": "OBJECT",
+                                    "properties": {
+                                        "status": {
+                                            "type": "STRING",
+                                            "description": "The desired status of the pump ('on' or 'off')."
+                                        }
+                                    },
+                                    "required": ["status"]
                                 }
                             },
-                            "required": ["cropName"]
-                        }
+                            {
+                                "name": "getDiagnosticsSummary",
+                                "description": "Provides a summary of any problems detected by the system.",
+                                "parameters": {
+                                    "type": "OBJECT",
+                                    "properties": {}
+                                }
+                            },
+                            {
+                                "name": "getCropInformation",
+                                "description": "Provides information about a specific crop being grown. The available crops are 'Lavender', 'Zoysia Grass', 'Tomatoes', and 'Apple Trees'.",
+                                "parameters": {
+                                    "type": "OBJECT",
+                                    "properties": {
+                                        "cropName": {
+                                            "type": "STRING",
+                                            "description": "The name of the crop (e.g., 'Lavender')."
+                                        }
+                                    },
+                                    "required": ["cropName"]
+                                }
+                            }
+                        ]
                     }
                 ]
-            }
-        ]
-    };
+            };
 
-    try {
-        const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-05-20:generateContent?key=${apiKey}`;
-        const response = await fetch(url, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload)
-        });
+            try {
+                const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-05-20:generateContent?key=${apiKey}`;
+                const response = await fetch(url, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
 
-        if (!response.ok) {
-            throw new Error(`API call failed with status: ${response.status}`);
-        }
+                if (!response.ok) {
+                    throw new Error(`API call failed with status: ${response.status}`);
+                }
 
-        const result = await response.json();
-        const candidate = result?.candidates?.[0];
-        const functionCall = candidate?.content?.parts?.[0]?.functionCall;
-        
-        const messagesContainer = document.getElementById('chatMessages');
-        messagesContainer.removeChild(messagesContainer.lastChild);
-        
-        if (functionCall) {
-            if (functionCall.name === "getZoneStatus") {
-                const zoneId = functionCall.args.zoneId;
-                const status = {
-                    moisture: sensorData[zoneId].moisture,
-                    temperature: sensorData[zoneId].temperature,
-                    humidity: sensorData[zoneId].humidity,
-                };
-                addMessage(`The current status for the ${sensorData[zoneId].crop} zone is:
+                const result = await response.json();
+                const candidate = result?.candidates?.[0];
+                const functionCall = candidate?.content?.parts?.[0]?.functionCall;
+                
+                const messagesContainer = document.getElementById('chatMessages');
+                messagesContainer.removeChild(messagesContainer.lastChild);
+                
+                if (functionCall) {
+                    if (functionCall.name === "getZoneStatus") {
+                        const zoneId = functionCall.args.zoneId;
+                        const data = sensorData[zoneId];
+                        if (data) {
+                            const status = {
+                                moisture: data.moisture !== undefined ? Math.round(data.moisture) : 'N/A',
+                                temperature: data.temperature !== undefined ? Math.round(data.temperature) : 'N/A',
+                                humidity: data.humidity !== undefined ? Math.round(data.humidity) : 'N/A',
+                            };
+                            addMessage(`The current status for the ${data.crop} zone is:
 - Soil Moisture: ${status.moisture}%
 - Temperature: ${status.temperature}°C
 - Humidity: ${status.humidity}%`, false);
-            } else if (functionCall.name === "updateSensorData") {
-                await triggerSimulatedSensorUpdate();
-                addMessage("I have updated the sensor values. The dashboard is now showing the new readings.", false);
-            } else if (functionCall.name === "setPumpStatus") {
-                const pumpStatus = functionCall.args.status;
-                await savePumpStatus(pumpStatus);
-                addMessage(`The water pump has been turned ${pumpStatus}.`, false);
-            } else if (functionCall.name === "getDiagnosticsSummary") {
-                addMessage(getDiagnosticsSummary(), false);
-            } else if (functionCall.name === "getCropInformation") {
-                const cropName = functionCall.args.cropName;
-                addMessage(getCropInformation(cropName), false);
-            }
-        } else {
-            const aiResponse = candidate?.content?.parts?.[0]?.text;
-            if (aiResponse) {
-                addMessage(aiResponse, false);
-            } else {
-                addMessage("I'm sorry, I couldn't generate a response. Please try again.", false);
+                        } else {
+                            addMessage(`I cannot find status for zone: ${zoneId}.`, false);
+                        }
+                    } else if (functionCall.name === "updateSensorData") {
+                        // Use a dummy function here as the simulation is running separately
+                        await new Promise(resolve => setTimeout(resolve, 500)); 
+                        addMessage("I have updated the sensor values. The dashboard is now showing the new readings.", false);
+                    } else if (functionCall.name === "setPumpStatus") {
+                        const pumpStatus = functionCall.args.status;
+                        await savePumpStatus(pumpStatus);
+                        addMessage(`The water pump has been turned ${pumpStatus}.`, false);
+                    } else if (functionCall.name === "getDiagnosticsSummary") {
+                        addMessage(getDiagnosticsSummary(), false);
+                    } else if (functionCall.name === "getCropInformation") {
+                        const cropName = functionCall.args.cropName;
+                        addMessage(getCropInformation(cropName), false);
+                    }
+                } else {
+                    const aiResponse = candidate?.content?.parts?.[0]?.text;
+                    if (aiResponse) {
+                        addMessage(aiResponse, false);
+                    } else {
+                        addMessage("I'm sorry, I couldn't generate a response. Please try again.", false);
+                    }
+                }
+            } catch (error) {
+                console.error("Error calling Gemini API:", error);
+                addMessage("There was an error connecting to the AI. Please try again later.", false);
             }
         }
-    } catch (error) {
-        console.error("Error calling Gemini API:", error);
-        addMessage("There was an error connecting to the AI. Please try again later.", false);
-    }
-}
+
         function handleChatInput() {
             const chatInput = document.getElementById('chatInput');
             const userInput = chatInput.value.trim();
@@ -595,9 +675,9 @@
 
             sensorInterval = setInterval(async () => {
                 for (const zone in sensorData) {
-                    const moisture = Math.floor(Math.random() * 100);
-                    const temperature = Math.floor(Math.random() * 20) + 15;
-                    const humidity = Math.floor(Math.random() * 50) + 40;
+                    const moisture = Math.random() * 80 + 10; 
+                    const temperature = Math.random() * 20 + 15;
+                    const humidity = Math.random() * 50 + 40;
                     const sensorDataPoint = {
                         moisture,
                         temperature,
@@ -612,30 +692,32 @@
                 }
             }, 5000); 
         }
+        
         function getDiagnosticsSummary() {
-    let problemZones = [];
-    for (const zone in sensorData) {
-        const data = sensorData[zone];
-        if (data.moisture < 20 || data.moisture > 80) {
-            problemZones.push(data.crop);
+            let problemZones = [];
+            for (const zone in sensorData) {
+                const data = sensorData[zone];
+                if (data.moisture !== undefined && (data.moisture < 20 || data.moisture > 80)) {
+                    problemZones.push(data.crop);
+                }
+            }
+
+            if (problemZones.length > 0) {
+                return `There are some issues detected. Low or high moisture levels were found in the following zones: ${problemZones.join(', ')}. Please check the Diagnostics tab for more details.`;
+            } else {
+                return "All systems are running normally. No issues have been detected.";
+            }
         }
-    }
 
-    if (problemZones.length > 0) {
-        return `There are some issues detected. Low or high moisture levels were found in the following zones: ${problemZones.join(', ')}. Please check the Diagnostics tab for more details.`;
-    } else {
-        return "All systems are running normally. No issues have been detected.";
-    }
-}
+        function getCropInformation(cropName) {
+            const crop = crops[cropName];
+            if (crop) {
+                return `Here is some information about ${cropName}: ${crop.description}`;
+            } else {
+                return `I'm sorry, I don't have information on a crop named ${cropName}. The available crops are Lavender, Zoysia Grass, Tomatoes, and Apple Trees.`;
+            }
+        }
 
-function getCropInformation(cropName) {
-    const crop = crops[cropName];
-    if (crop) {
-        return `Here is some information about ${cropName}: ${crop.description}`;
-    } else {
-        return `I'm sorry, I don't have information on a crop named ${cropName}. The available crops are Lavender, Zoysia Grass, Tomatoes, and Apple Trees.`;
-    }
-}
         function showMessage(msg, type = "info") {
             const messageBox = document.getElementById('statusMessage');
             messageBox.textContent = msg;
@@ -664,12 +746,15 @@ function getCropInformation(cropName) {
         function setActiveZone(zoneId) {
             activeZone = zoneId;
             const data = sensorData[zoneId];
-            document.getElementById('zoneDetailTitle').textContent = `${data.crop} - Zone ${zoneId.replace('zone', '')}`;
-            document.getElementById('moistureValue').textContent = `${data.moisture}%`;
-            document.getElementById('moistureBar').style.width = `${data.moisture}%`;
-            document.getElementById('moistureBar').className = `h-full rounded-full ${data.moisture > 60 ? 'bg-green-500' : data.moisture > 30 ? 'bg-yellow-500' : 'bg-red-500'}`;
-            document.getElementById('tempValue').textContent = `${data.temperature}°C`;
-            document.getElementById('humidityValue').textContent = `${data.humidity}%`;
+            if (data) {
+                const moisture = data.moisture !== undefined ? Math.round(data.moisture) : 0;
+                document.getElementById('zoneDetailTitle').textContent = `${data.crop} - Zone ${zoneId.replace('zone', '')}`;
+                document.getElementById('moistureValue').textContent = `${moisture}%`;
+                document.getElementById('moistureBar').style.width = `${moisture}%`;
+                document.getElementById('moistureBar').className = `h-full rounded-full ${moisture > 60 ? 'bg-green-500' : moisture > 30 ? 'bg-yellow-500' : 'bg-red-500'}`;
+                document.getElementById('tempValue').textContent = `${data.temperature !== undefined ? Math.round(data.temperature) : '--'}°C`;
+                document.getElementById('humidityValue').textContent = `${data.humidity !== undefined ? Math.round(data.humidity) : '--'}%`;
+            }
         }
 
         // --- Authentication Functions ---
@@ -954,7 +1039,6 @@ function getCropInformation(cropName) {
 </head>
 <body data-theme="dark" class="min-h-screen p-4 sm:p-8 flex items-center justify-center">
     
-    <!-- Authentication Container (shown by default) -->
     <div id="authContainer" class="w-full max-w-sm bg-gray-900 rounded-2xl p-6 sm:p-10 shadow-lg border border-gray-800">
         <div id="login" class="auth-view">
             <h2 class="text-3xl font-bold text-center text-gray-100 mb-6">Log In</h2>
@@ -1005,9 +1089,7 @@ function getCropInformation(cropName) {
         </div>
     </div>
 
-    <!-- Main App Container (hidden by default) -->
     <div id="appContainer" class="hidden w-full max-w-4xl bg-gray-900 rounded-2xl p-6 sm:p-10 shadow-lg border border-gray-800">
-        <!-- Header -->
         <header class="flex flex-col sm:flex-row items-start sm:items-center justify-between mb-8">
             <div class="flex items-center gap-4 mb-4 sm:mb-0">
                 <div class="p-2 bg-green-500 rounded-full">
@@ -1033,10 +1115,8 @@ function getCropInformation(cropName) {
             </div>
         </header>
 
-        <!-- Status Message -->
         <div id="statusMessage" class="opacity-0 transition-opacity duration-300"></div>
 
-        <!-- Tab Navigation -->
         <div class="flex border-b border-gray-700 mb-6">
             <button id="tab-btn-dashboard" class="tab-button flex-1 text-center py-3 text-lg font-semibold text-gray-400 hover:text-gray-200 hover:border-gray-500">Dashboard</button>
             <button id="tab-btn-assistant" class="tab-button flex-1 text-center py-3 text-lg font-semibold text-gray-400 hover:text-gray-200 hover:border-gray-500">AI Assistant</button>
@@ -1044,7 +1124,6 @@ function getCropInformation(cropName) {
             <button id="tab-btn-crops" class="tab-button flex-1 text-center py-3 text-lg font-semibold text-gray-400 hover:text-gray-200 hover:border-gray-500">What's Growing?</button>
         </div>
 
-        <!-- Dashboard Content -->
         <div id="dashboard-tab" class="tab-content view">
             <div id="dashboardView" class="view">
                 <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
@@ -1074,7 +1153,6 @@ function getCropInformation(cropName) {
                     </div>
                 </div>
 
-                <!-- NEW: ESP32 Live Data Box (from Realtime Database) -->
                 <div class="bg-gray-800 p-6 rounded-xl shadow-inner border border-green-500 mb-8">
                     <h3 class="text-xl font-bold text-green-400 mb-4">⭐ ESP32 RAW Live Feed ⭐</h3>
                     <div class="space-y-2 text-gray-400">
@@ -1084,8 +1162,6 @@ function getCropInformation(cropName) {
                         <p>Pump Status: <span id="status" class="text-gray-100 font-bold">...Loading</span></p>
                     </div>
                 </div>
-                <!-- END NEW LIVE DATA BOX -->
-
                 <div class="bg-gray-800 p-6 rounded-xl shadow-inner border border-gray-700 mb-8">
                     <h3 class="text-lg font-semibold text-gray-100 mb-4">Garden Zone</h3>
                     <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
@@ -1146,7 +1222,6 @@ function getCropInformation(cropName) {
                 </div>
             </div>
 
-            <!-- Zone Detail View (Hidden by default) -->
             <div id="zoneDetailView" class="view hidden">
                 <button id="showDashboard" class="text-gray-400 hover:text-gray-200 mb-6 flex items-center gap-2">
                     <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
@@ -1157,7 +1232,6 @@ function getCropInformation(cropName) {
                 <h2 id="zoneDetailTitle" class="text-3xl font-bold text-gray-100 mb-6">Flower Bed - Zone 1</h2>
                 
                 <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
-                    <!-- Sensor Reading Card -->
                     <div class="bg-gray-800 p-6 rounded-xl shadow-inner border border-gray-700">
                         <h3 class="text-sm text-gray-400 mb-2">Soil Moisture</h3>
                         <div class="flex items-end gap-2 mb-2">
@@ -1168,14 +1242,12 @@ function getCropInformation(cropName) {
                         </div>
                     </div>
                     
-                    <!-- Temperature Card -->
                     <div class="bg-gray-800 p-6 rounded-xl shadow-inner border border-gray-700">
                         <h3 class="text-sm text-gray-400 mb-2">Temperature</h3>
                         <span id="tempValue" class="text-4xl font-extrabold text-gray-100">25°C</span>
                         <p class="text-sm text-gray-500 mt-1">Optimal for this crop</p>
                     </div>
                     
-                    <!-- Humidity Card -->
                     <div class="bg-gray-800 p-6 rounded-xl shadow-inner border border-gray-700">
                         <h3 class="text-sm text-gray-400 mb-2">Humidity</h3>
                         <span id="humidityValue" class="text-4xl font-extrabold text-gray-100">65%</span>
@@ -1183,7 +1255,6 @@ function getCropInformation(cropName) {
                     </div>
                 </div>
                 
-                <!-- Historical Data (Graph Placeholder) -->
                 <div class="bg-gray-800 p-6 rounded-xl shadow-inner border border-gray-700">
                     <h3 class="text-lg font-semibold text-gray-100 mb-4">Moisture Trends (Past 7 Days)</h3>
                     <div class="w-full h-48 bg-gray-700 rounded-lg flex items-center justify-center text-gray-500 italic">
@@ -1193,11 +1264,9 @@ function getCropInformation(cropName) {
             </div>
         </div>
         
-        <!-- AI Assistant Tab -->
         <div id="assistant-tab" class="tab-content hidden">
             <div class="flex flex-col h-[60vh] max-h-[60vh] bg-gray-800 rounded-xl shadow-inner border border-gray-700">
                 <div id="chatMessages" class="flex-1 p-6 overflow-y-auto flex flex-col space-y-3">
-                    <!-- Chat messages will be appended here -->
                     <div class="p-3 rounded-lg max-w-[80%] bg-gray-700 text-gray-200 mr-auto">
                         Hello! I am Hydro-AI, your smart irrigation assistant. How can I help?
                     </div>
@@ -1218,22 +1287,18 @@ function getCropInformation(cropName) {
             </div>
         </div>
         
-        <!-- Diagnostics Tab -->
         <div id="diagnostics-tab" class="tab-content hidden">
             <h3 class="text-2xl font-bold text-gray-100 mb-4">System Health & Diagnostics</h3>
             <p class="text-sm text-gray-400 mb-6">Hydro-AI continuously monitors all components and provides real-time health checks and suggestions.</p>
             <div id="diagnosticsContainer" class="flex flex-col space-y-4">
-                <!-- Diagnostics messages will be dynamically added here -->
-            </div>
+                </div>
         </div>
 
-        <!-- Crops Tab -->
         <div id="crops-tab" class="tab-content hidden">
             <h3 class="text-2xl font-bold text-gray-100 mb-4">What's Growing?</h3>
             <p class="text-sm text-gray-400 mb-6">Here are the crops in your garden and their specific care needs.</p>
             <div id="cropsContainer" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-                <!-- Crop cards will be dynamically added here -->
-            </div>
+                </div>
         </div>
         
     </div>
