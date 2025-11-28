@@ -29,7 +29,8 @@
             measurementId: "G-KM4XGDFSDR",
             databaseURL: "https://mini-ai-irrigation-system-default-rtdb.firebaseio.com/", 
         };
-        const apiKey = "AIzaSyDB11MzkWqyZi6kB7pOWCupMEapTks7dKE"; 
+        // NOTE: The external AI Assistant chat is disabled due to API key security issues.
+        const apiKey = ""; // API key removed for security on public GitHub pages.
         const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-05-20:generateContent?key=${apiKey}`;
         const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? initialAuthToken : null;
         
@@ -49,7 +50,7 @@
 
         // --- NEW: TensorFlow.js Model Integration Variables ---
         let tfjsModel;
-        // 👇👇👇 YOUR SCALER PARAMETERS (Mean, Std Dev) PASTE HERE 👇👇👇
+        // 👇👇👇 YOUR SCALER PARAMETERS PASTE HERE 👇👇👇
         const SCALER_MEAN = [45.4859625, 22.5528125, 44.98325]; 
         const SCALER_STD = [26.002991230790848, 13.259638412861953, 14.716702057102202];   
         // 👆👆👆 THIS IS CRUCIAL FOR MODEL ACCURACY 👆👆👆
@@ -109,20 +110,18 @@
             return predictionValue > 0.5 ? 1 : 0;
         }
 
-
-// --- NEW FUNCTION: Model Loading ---
-async function loadModel() {
-    try {
-        // MODIFIED: This path is now updated to match the unnecessary nested structure in your repo.
-        // It should ONLY be used if you CANNOT fix the file structure on GitHub.
-        tfjsModel = await tf.loadLayersModel('./tfjs_model_web/irrigation_model_files/tfjs_model_web/model.json'); 
-        console.log("TensorFlow.js Model loaded successfully!");
-        showMessage("AI Model Loaded.", "success");
-    } catch (e) {
-        console.error("Failed to load TensorFlow.js model:", e);
-        showMessage("Error loading AI model. Check the deeply nested folder path.", "error");
-    }
-}
+        // --- NEW FUNCTION: Model Loading ---
+        async function loadModel() {
+            try {
+                // Loading the model from the subfolder you uploaded to GitHub
+                tfjsModel = await tf.loadLayersModel('./tfjs_model_web/model.json');
+                console.log("TensorFlow.js Model loaded successfully!");
+                showMessage("AI Model Loaded.", "success");
+            } catch (e) {
+                console.error("Failed to load TensorFlow.js model:", e);
+                showMessage("Error loading AI model. Check 'tfjs_model_web' folder path and content on GitHub.", "error");
+            }
+        }
 
         async function initFirebase() {
             try {
@@ -494,166 +493,67 @@ async function loadModel() {
             messagesContainer.scrollTop = messagesContainer.scrollHeight;  
         }
 
-       async function generateAiResponse(userInput) {
+        // -----------------------------------------------------------
+        // REPLACED FUNCTION: Mock Tool Router (No Gemini API key needed)
+        // -----------------------------------------------------------
+        async function generateAiResponse(userInput) {
             const thinkingMessage = "Hydro-AI is thinking...";
             addMessage(thinkingMessage, false);
-
-            const systemPrompt = `You are a helpful AI assistant for a smart irrigation system named Hydro-AI. 
-            Your primary function is to provide information about the system's current status, sensor readings, and to process commands to update the system.
-            You know about the different sections of the app:
-            - **Dashboard**: Shows a high-level overview.
-            - **Diagnostics**: Provides a health report and identifies problems.
-            - **What's Growing?**: Gives information on the crops in each zone.
             
-            You have access to three tools: 
-            1. 'getZoneStatus' which provides real-time data for a specific irrigation zone.
-            2. 'updateSensorData' which updates the data by generating new simulated values.
-            3. 'setPumpStatus' which can turn the water pump on or off.
-            4. 'getDiagnosticsSummary' which gives a summary of current system problems.
-            5. 'getCropInformation' which provides details about a specific crop.
+            const normalizedInput = userInput.toLowerCase().trim();
+            
+            const messagesContainer = document.getElementById('chatMessages');
+            messagesContainer.removeChild(messagesContainer.lastChild);
 
-            - When the user asks about the status of a specific zone (e.g., 'vegetable patch' or 'zone 2'), you MUST use the 'getZoneStatus' tool with the correct zone ID.
-            - When the user asks to update, change, or refresh the values, you MUST use the 'updateSensorData' tool.
-            - When the user gives a command to turn the pump 'on' or 'off', you MUST use the 'setPumpStatus' tool.
-            - When the user asks about system diagnostics or problems, you MUST use the 'getDiagnosticsSummary' tool.
-            - When the user asks about a specific crop, you MUST use the 'getCropInformation' tool with the crop's name.
+            // --- 1. Tool Routing Logic ---
 
-            Do not make up any information. If a question is outside the scope of the irrigation system status or control, acknowledge that you can't help with that.`;
+            // A. Check for Pump Commands
+            if (normalizedInput.includes("turn pump on") || normalizedInput.includes("start pump")) {
+                await savePumpStatus("on");
+                addMessage(`System Command: The water pump has been turned ON.`, false);
+            } 
+            else if (normalizedInput.includes("turn pump off") || normalizedInput.includes("stop pump")) {
+                await savePumpStatus("off");
+                addMessage(`System Command: The water pump has been turned OFF.`, false);
+            } 
+            
+            // B. Check for Status/Diagnostics
+            else if (normalizedInput.includes("status") || normalizedInput.includes("readings")) {
+                
+                // 1. Check for a specific zone number (using Regex to find "zone X" or just "X")
+                const zoneMatch = normalizedInput.match(/(zone\s*|patch\s*|zone |)(\d)/);
+                let zoneIdToReport = activeZone; // Default to the currently active zone view
 
-            const payload = {
-                systemInstruction: {
-                    parts: [{ text: systemPrompt }]
-                },
-                contents: [{ parts: [{ text: userInput }] }],
-                tools: [
-                    {
-                        "functionDeclarations": [
-                            {
-                                "name": "getZoneStatus",
-                                "description": "Get the current status of a specific irrigation zone. The available zones are 'zone1', 'zone2', 'zone3', and 'zone4'.",
-                                "parameters": {
-                                    "type": "OBJECT",
-                                    "properties": {
-                                        "zoneId": {
-                                            "type": "STRING",
-                                            "description": "The ID of the irrigation zone (e.g., 'zone1', 'zone2')."
-                                        }
-                                    },
-                                    "required": ["zoneId"]
-                                }
-                            },
-                            {
-                                "name": "updateSensorData",
-                                "description": "Updates the sensor data by generating new simulated values. Use this when the user asks to update or change the readings.",
-                                "parameters": {
-                                    "type": "OBJECT",
-                                    "properties": {}
-                                }
-                            },
-                            {
-                                "name": "setPumpStatus",
-                                "description": "Sets the status of the water pump to 'on' or 'off'.",
-                                "parameters": {
-                                    "type": "OBJECT",
-                                    "properties": {
-                                        "status": {
-                                            "type": "STRING",
-                                            "description": "The desired status of the pump ('on' or 'off')."
-                                        }
-                                    },
-                                    "required": ["status"]
-                                }
-                            },
-                            {
-                                "name": "getDiagnosticsSummary",
-                                "description": "Provides a summary of any problems detected by the system.",
-                                "parameters": {
-                                    "type": "OBJECT",
-                                    "properties": {}
-                                }
-                            },
-                            {
-                                "name": "getCropInformation",
-                                "description": "Provides information about a specific crop being grown. The available crops are 'Lavender', 'Zoysia Grass', 'Tomatoes', and 'Apple Trees'.",
-                                "parameters": {
-                                    "type": "OBJECT",
-                                    "properties": {
-                                        "cropName": {
-                                            "type": "STRING",
-                                            "description": "The name of the crop (e.g., 'Lavender')."
-                                        }
-                                    },
-                                    "required": ["cropName"]
-                                }
-                            }
-                        ]
-                    }
-                ]
-            };
-
-            try {
-                const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-05-20:generateContent?key=${apiKey}`;
-                const response = await fetch(url, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(payload)
-                });
-
-                if (!response.ok) {
-                    throw new Error(`API call failed with status: ${response.status}`);
+                if (zoneMatch && zoneMatch[2]) {
+                    // Convert found digit to zoneId format
+                    zoneIdToReport = 'zone' + zoneMatch[2];
+                } else if (normalizedInput.includes("all")) {
+                     // Handle "status of all zones" 
+                     addMessage(`Showing general status. Please visit the Diagnostics tab for full details.
+- All Zones are monitored by your TensorFlow.js model.
+- Pump Status is currently **${isPumpOn ? 'ON' : 'OFF'}**.`, false);
+                     return;
                 }
 
-                const result = await response.json();
-                const candidate = result?.candidates?.[0];
-                const functionCall = candidate?.content?.parts?.[0]?.functionCall;
+                const data = sensorData[zoneIdToReport];
                 
-                const messagesContainer = document.getElementById('chatMessages');
-                messagesContainer.removeChild(messagesContainer.lastChild);
-                
-                if (functionCall) {
-                    if (functionCall.name === "getZoneStatus") {
-                        const zoneId = functionCall.args.zoneId;
-                        const data = sensorData[zoneId];
-                        if (data) {
-                            const status = {
-                                moisture: data.moisture !== undefined ? Math.round(data.moisture) : 'N/A',
-                                temperature: data.temperature !== undefined ? Math.round(data.temperature) : 'N/A',
-                                humidity: data.humidity !== undefined ? Math.round(data.humidity) : 'N/A',
-                            };
-                            addMessage(`The current status for the ${data.crop} zone is:
-- Soil Moisture: ${status.moisture}%
-- Temperature: ${status.temperature}°C
-- Humidity: ${status.humidity}%`, false);
-                        } else {
-                            addMessage(`I cannot find status for zone: ${zoneId}.`, false);
-                        }
-                    } else if (functionCall.name === "updateSensorData") {
-                        // Use a dummy function here as the simulation is running separately
-                        await new Promise(resolve => setTimeout(resolve, 500)); 
-                        addMessage("I have updated the sensor values. The dashboard is now showing the new readings.", false);
-                    } else if (functionCall.name === "setPumpStatus") {
-                        const pumpStatus = functionCall.args.status;
-                        await savePumpStatus(pumpStatus);
-                        addMessage(`The water pump has been turned ${pumpStatus}.`, false);
-                    } else if (functionCall.name === "getDiagnosticsSummary") {
-                        addMessage(getDiagnosticsSummary(), false);
-                    } else if (functionCall.name === "getCropInformation") {
-                        const cropName = functionCall.args.cropName;
-                        addMessage(getCropInformation(cropName), false);
-                    }
+                if (data && data.moisture !== undefined) {
+                     addMessage(`Current status for the **${data.crop} (${zoneIdToReport.toUpperCase()})** zone:
+- Soil Moisture: ${Math.round(data.moisture)}%
+- Temperature: ${Math.round(data.temperature)}°C
+- Humidity: ${Math.round(data.humidity)}%`, false);
                 } else {
-                    const aiResponse = candidate?.content?.parts?.[0]?.text;
-                    if (aiResponse) {
-                        addMessage(aiResponse, false);
-                    } else {
-                        addMessage("I'm sorry, I couldn't generate a response. Please try again.", false);
-                    }
+                     addMessage(`I could not retrieve data for **${zoneIdToReport}**. Please ensure that zone is active and data is available.`, false);
                 }
-            } catch (error) {
-                console.error("Error calling Gemini API:", error);
-                addMessage("There was an error connecting to the AI. Please try again later.", false);
+            } 
+            
+            // C. Fallback for Unrecognized/General Input
+            else {
+                addMessage(`I am Hydro-AI, the smart irrigation assistant. I can only respond to direct commands about the pump, like "turn pump on," "stop pump," or specific status queries like "status of zone 3."`, false);
             }
         }
+        // -----------------------------------------------------------
+
 
         function handleChatInput() {
             const chatInput = document.getElementById('chatInput');
@@ -1270,7 +1170,7 @@ async function loadModel() {
             <div class="flex flex-col h-[60vh] max-h-[60vh] bg-gray-800 rounded-xl shadow-inner border border-gray-700">
                 <div id="chatMessages" class="flex-1 p-6 overflow-y-auto flex flex-col space-y-3">
                     <div class="p-3 rounded-lg max-w-[80%] bg-gray-700 text-gray-200 mr-auto">
-                        Hello! I am Hydro-AI, your smart irrigation assistant. How can I help?
+                        Hello! I am Hydro-AI, your smart irrigation assistant. How can I help? (Try: "turn pump on" or "status of zone 3")
                     </div>
                 </div>
                 <div class="p-4 border-t border-gray-700 flex items-center gap-2">
@@ -1306,5 +1206,3 @@ async function loadModel() {
     </div>
 </body>
 </html>
-
-
