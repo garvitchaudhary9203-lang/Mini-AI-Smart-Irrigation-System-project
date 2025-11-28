@@ -109,18 +109,20 @@
             return predictionValue > 0.5 ? 1 : 0;
         }
 
-        // --- NEW FUNCTION: Model Loading ---
-        async function loadModel() {
-            try {
-                // Loading the model from the subfolder you converted and uploaded to GitHub
-                tfjsModel = await tf.loadLayersModel('./tfjs_model_web/model.json');
-                console.log("TensorFlow.js Model loaded successfully!");
-                showMessage("AI Model Loaded.", "success");
-            } catch (e) {
-                console.error("Failed to load TensorFlow.js model:", e);
-                showMessage("Error loading AI model. Check 'tfjs_model_web' folder path and content.", "error");
-            }
-        }
+
+// --- NEW FUNCTION: Model Loading ---
+async function loadModel() {
+    try {
+        // MODIFIED: This path is now updated to match the unnecessary nested structure in your repo.
+        // It should ONLY be used if you CANNOT fix the file structure on GitHub.
+        tfjsModel = await tf.loadLayersModel('./tfjs_model_web/irrigation_model_files/tfjs_model_web/model.json'); 
+        console.log("TensorFlow.js Model loaded successfully!");
+        showMessage("AI Model Loaded.", "success");
+    } catch (e) {
+        console.error("Failed to load TensorFlow.js model:", e);
+        showMessage("Error loading AI model. Check the deeply nested folder path.", "error");
+    }
+}
 
         async function initFirebase() {
             try {
@@ -1304,3 +1306,4 @@
     </div>
 </body>
 </html>
+
