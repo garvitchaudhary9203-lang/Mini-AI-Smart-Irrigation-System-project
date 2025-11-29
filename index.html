@@ -3,306 +3,193 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Hydro-AI:SIS (Serial Monitor)</title>
-    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M12 3v18M12 3c-1.105 0-2 .895-2 2s.895 2 2 2h0c1.105 0 2-.895 2-2s-.895-2-2-2zM4 14h16m-8 0a4 4 0 100-8 4 4 0 000 8z'/%3E%3C/svg%3E" type="image/svg+xml">
+    <title>Hydro-AI: Live Serial Monitor</title>
     <script src="https://cdn.tailwindcss.com"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.2.0/dist/tf.min.js"></script>
-
     <script type="module">
-        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
-        import { getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-        import { getFirestore, doc, getDoc, setDoc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
-
-        // --- Firebase Config (Keep your existing config) ---
-        const firebaseConfig = {
-            apiKey: "AIzaSyCvKwpHAvcu9QSJDjqf_zdiTSGDpdNrJbw",
-            authDomain: "mini-ai-irrigation-system.firebaseapp.com",
-            projectId: "mini-ai-irrigation-system",
-            storageBucket: "mini-ai-irrigation-system.firebasestorage.app",
-            messagingSenderId: "205361105789",
-            appId: "1:205361105789:web:4c75a11eab0f8263265a14",
-            measurementId: "G-KM4XGDFSDR",
-            databaseURL: "https://mini-ai-irrigation-system-default-rtdb.firebaseio.com/", 
-        };
-
-        let app, auth, db;
-        let isPumpOn = false;
-
         // --- SERIAL PORT VARIABLES ---
         let port;
         let reader;
-        let inputDone;
-        let outputDone;
-        let inputStream;
-        let outputStream;
+        let isConnected = false;
 
-        async function initFirebase() {
-            try {
-                app = initializeApp(firebaseConfig);
-                auth = getAuth(app);
-                db = getFirestore(app);
-
-                onAuthStateChanged(auth, (user) => {
-                    if (user) {
-                        document.getElementById('userIdDisplay').textContent = `User: ${user.email}`;
-                        document.getElementById('authContainer').classList.add('hidden');
-                        document.getElementById('appContainer').classList.remove('hidden');
-                    } else {
-                        document.getElementById('appContainer').classList.add('hidden');
-                        document.getElementById('authContainer').classList.remove('hidden');
-                    }
-                });
-            } catch (error) {
-                console.error("Firebase Error", error);
-            }
-        }
-
-        // --- NEW: FUNCTION TO CONNECT TO ARDUINO ---
+        // --- CONNECT TO ARDUINO ---
         async function connectToSerial() {
             if ("serial" in navigator) {
                 try {
+                    // 1. Request Port
                     port = await navigator.serial.requestPort();
-                    await port.open({ baudRate: 9600 }); // Match Arduino Code Speed
-
-                    const textDecoder = new TextDecoderStream();
-                    inputDone = port.readable.pipeTo(textDecoder.writable);
-                    reader = textDecoder.readable.getReader();
-
-                    document.getElementById('connectBtn').textContent = "Connected!";
+                    // 2. Open Port (9600 matches Arduino code)
+                    await port.open({ baudRate: 9600 });
+                    
+                    isConnected = true;
+                    document.getElementById('connectBtn').textContent = "Connected! Receiving Data...";
                     document.getElementById('connectBtn').classList.remove('bg-blue-600');
-                    document.getElementById('connectBtn').classList.add('bg-green-600');
-
+                    document.getElementById('connectBtn').classList.add('bg-green-600', 'animate-pulse');
+                    
+                    // 3. Start Reading Loop
                     readLoop();
                 } catch (err) {
-                    console.error('Serial Connection Error:', err);
+                    console.error('Connection Error:', err);
                     alert("Failed to connect: " + err);
                 }
             } else {
-                alert('Web Serial API not supported in this browser. Try Chrome or Edge.');
+                alert('Web Serial API is not supported in this browser. Please use Google Chrome or Microsoft Edge.');
             }
         }
 
-        // --- NEW: LOOP TO READ DATA ---
+        // --- READ LOOP ---
         async function readLoop() {
-            let buffer = ""; // Buffer to store partial data
+            const textDecoder = new TextDecoderStream();
+            const readableStreamClosed = port.readable.pipeTo(textDecoder.writable);
+            reader = textDecoder.readable.getReader();
             
-            while (true) {
-                const { value, done } = await reader.read();
-                if (done) {
-                    reader.releaseLock();
-                    break;
-                }
-                if (value) {
-                    // Arduino sends data in chunks. We need to assemble lines.
-                    buffer += value;
-                    let lines = buffer.split('\n'); // Split by new line
-                    
-                    // The last part might be incomplete, put it back in buffer
-                    buffer = lines.pop(); 
+            let buffer = "";
 
-                    for (const line of lines) {
-                        parseArduinoData(line.trim());
+            try {
+                while (true) {
+                    const { value, done } = await reader.read();
+                    if (done) {
+                        break;
+                    }
+                    if (value) {
+                        buffer += value;
+                        // Split by new line (\n) sent by Serial.println()
+                        let lines = buffer.split('\n');
+                        
+                        // Keep the incomplete last line in the buffer
+                        buffer = lines.pop(); 
+
+                        for (const line of lines) {
+                            parseData(line.trim());
+                        }
                     }
                 }
+            } catch (error) {
+                console.error("Read Error:", error);
+            } finally {
+                reader.releaseLock();
             }
         }
 
-        // --- NEW: PARSE DATA AND UPDATE UI ---
-        // Expects format: "Data,SoilValue,Temperature" (e.g., "Data,500,24.50")
-        function parseArduinoData(dataString) {
-            console.log("Raw Data:", dataString); // Debugging
+        // --- PARSE DATA & UPDATE UI ---
+        function parseData(dataString) {
+            // Debug: Show raw data on screen so user knows it's working
+            document.getElementById('rawDataDisplay').textContent = "Raw Input: " + dataString;
 
+            // Expected Format: "Data,SoilValue,Temperature"
             const parts = dataString.split(',');
-            
-            // Check if it matches our expected format
-            if (parts.length >= 3 && parts[0] === "Data") {
+
+            if (parts[0] === "Data" && parts.length >= 3) {
                 const rawSoil = parseInt(parts[1]);
                 const tempVal = parseFloat(parts[2]);
 
-                // 1. Update Temperature
-                document.getElementById('temperature').textContent = tempVal.toFixed(1) + "°C";
-                document.getElementById('tempValue').textContent = tempVal.toFixed(1) + "°C";
+                // Convert Raw Soil (0-1023) to Percentage (0-100%)
+                // 1023 is DRY, 0 is WET
+                let percentage = Math.round((1 - (rawSoil / 1023)) * 100);
+                if (percentage < 0) percentage = 0;
+                if (percentage > 100) percentage = 100;
 
-                // 2. Update Soil Moisture
-                // Map Arduino scale (approx 1023=Dry, 0=Wet) to Percentage (0-100%)
-                // Adjust '1023' if your sensor max is different
-                let soilPercent = Math.round((1 - (rawSoil / 1023)) * 100);
-                if(soilPercent < 0) soilPercent = 0;
-                if(soilPercent > 100) soilPercent = 100;
-
-                document.getElementById('soil').textContent = soilPercent + "%";
-                document.getElementById('moistureValue').textContent = soilPercent + "%";
-                document.getElementById('moistureBar').style.width = soilPercent + "%";
+                // --- UPDATE DOM ELEMENTS ---
+                document.getElementById('soil').textContent = percentage + "%";
+                document.getElementById('temperature').textContent = tempVal + "°C";
                 
-                // Color coding for bar
+                // Update Visual Bar
                 const bar = document.getElementById('moistureBar');
-                bar.className = `h-full rounded-full ${soilPercent > 60 ? 'bg-green-500' : soilPercent > 30 ? 'bg-yellow-500' : 'bg-red-500'}`;
-
-                // 3. Update Status Logic
-                if (soilPercent < 30) {
-                   document.getElementById('status').textContent = "DRY - PUMP ON (Auto)";
-                   document.getElementById('systemStatus').textContent = "Watering Active";
-                   document.getElementById('pumpIndicator').classList.remove('bg-red-500');
-                   document.getElementById('pumpIndicator').classList.add('bg-green-500');
+                bar.style.width = percentage + "%";
+                
+                // Update Color based on moisture
+                if(percentage < 30) {
+                    bar.className = "h-full rounded-full bg-red-500 transition-all duration-500";
+                    document.getElementById('status').textContent = "CRITICAL: PUMP ON";
+                    document.getElementById('status').className = "text-red-400 font-bold";
+                } else if (percentage < 60) {
+                    bar.className = "h-full rounded-full bg-yellow-500 transition-all duration-500";
+                    document.getElementById('status').textContent = "Moisture OK";
+                    document.getElementById('status').className = "text-yellow-400 font-bold";
                 } else {
-                   document.getElementById('status').textContent = "WET - PUMP OFF";
-                   document.getElementById('systemStatus').textContent = "All Zones OK";
-                   document.getElementById('pumpIndicator').classList.add('bg-red-500');
-                   document.getElementById('pumpIndicator').classList.remove('bg-green-500');
+                    bar.className = "h-full rounded-full bg-green-500 transition-all duration-500";
+                    document.getElementById('status').textContent = "Fully Watered";
+                    document.getElementById('status').className = "text-green-400 font-bold";
                 }
             }
         }
 
-        // --- Standard UI Functions ---
-        function updateActiveTab(tabName) {
-            document.querySelectorAll('.tab-content').forEach(el => el.classList.add('hidden'));
-            document.querySelectorAll('.tab-button').forEach(el => el.classList.remove('border-green-500', 'text-green-500'));
-            document.getElementById(`${tabName}-tab`).classList.remove('hidden');
-            document.getElementById(`tab-btn-${tabName}`).classList.add('border-green-500', 'text-green-500');
-        }
-
+        // --- PAGE LOAD EVENTS ---
         window.onload = function() {
-            initFirebase();
-            updateActiveTab('dashboard');
-
-            // Listeners
             document.getElementById('connectBtn').addEventListener('click', connectToSerial);
-
-            document.getElementById('tab-btn-dashboard').addEventListener('click', () => updateActiveTab('dashboard'));
-            document.getElementById('tab-btn-diagnostics').addEventListener('click', () => updateActiveTab('diagnostics'));
             
-            // Login/Signup UI Logic (Simplified for brevity)
-            document.getElementById('showSignup').addEventListener('click', (e) => {
-                e.preventDefault();
-                document.getElementById('login').classList.add('hidden');
-                document.getElementById('signup').classList.remove('hidden');
+            // Allow skipping login for hardware testing
+            document.getElementById('skipLoginBtn').addEventListener('click', () => {
+                document.getElementById('authContainer').classList.add('hidden');
+                document.getElementById('appContainer').classList.remove('hidden');
             });
-            document.getElementById('showLogin').addEventListener('click', (e) => {
-                e.preventDefault();
-                document.getElementById('signup').classList.add('hidden');
-                document.getElementById('login').classList.remove('hidden');
-            });
-
-            // Auth Submission
-             document.getElementById('login-form').addEventListener('submit', async (e) => {
-                e.preventDefault();
-                const email = document.getElementById('loginEmail').value;
-                const pass = document.getElementById('loginPassword').value;
-                try { await signInWithEmailAndPassword(auth, email, pass); } catch(err) { alert(err.message); }
-            });
-             document.getElementById('signup-form').addEventListener('submit', async (e) => {
-                e.preventDefault();
-                const email = document.getElementById('signupEmail').value;
-                const pass = document.getElementById('signupPassword').value;
-                try { await createUserWithEmailAndPassword(auth, email, pass); } catch(err) { alert(err.message); }
-            });
-            document.getElementById('logout-btn').addEventListener('click', () => signOut(auth));
         };
     </script>
 
     <style>
-        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700&display=swap');
         body { font-family: 'Inter', sans-serif; background-color: #0d111c; color: #e2e8f0; }
-        .tab-button { border-bottom: 2px solid transparent; transition: all 0.2s; }
     </style>
 </head>
 <body class="min-h-screen p-4 sm:p-8 flex items-center justify-center">
 
-    <div id="authContainer" class="w-full max-w-sm bg-gray-900 rounded-2xl p-6 border border-gray-800">
-        <div id="login">
-            <h2 class="text-3xl font-bold text-center mb-6">Log In</h2>
-            <form id="login-form">
-                <input type="email" id="loginEmail" placeholder="Email" class="w-full p-3 mb-4 rounded bg-gray-800 border border-gray-700" required>
-                <input type="password" id="loginPassword" placeholder="Password" class="w-full p-3 mb-6 rounded bg-gray-800 border border-gray-700" required>
-                <button type="submit" class="w-full bg-green-600 hover:bg-green-700 text-white font-bold py-3 rounded">Log In</button>
-            </form>
-            <div class="text-center mt-4 text-sm text-gray-400">No account? <a href="#" id="showSignup" class="text-green-400">Sign up</a></div>
-        </div>
-        <div id="signup" class="hidden">
-            <h2 class="text-3xl font-bold text-center mb-6">Sign Up</h2>
-            <form id="signup-form">
-                <input type="email" id="signupEmail" placeholder="Email" class="w-full p-3 mb-4 rounded bg-gray-800 border border-gray-700" required>
-                <input type="password" id="signupPassword" placeholder="Password" class="w-full p-3 mb-6 rounded bg-gray-800 border border-gray-700" required>
-                <button type="submit" class="w-full bg-green-600 hover:bg-green-700 text-white font-bold py-3 rounded">Sign Up</button>
-            </form>
-            <div class="text-center mt-4 text-sm text-gray-400">Have account? <a href="#" id="showLogin" class="text-green-400">Log In</a></div>
-        </div>
+    <div id="authContainer" class="w-full max-w-sm bg-gray-900 rounded-2xl p-6 border border-gray-800 shadow-xl">
+        <h2 class="text-3xl font-bold text-center mb-6 text-white">Hydro-AI</h2>
+        <p class="text-gray-400 text-center mb-6">Smart Irrigation System</p>
+        
+        <button id="skipLoginBtn" class="w-full bg-green-600 hover:bg-green-700 text-white font-bold py-3 rounded-lg transition-colors flex items-center justify-center gap-2">
+            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+            Test Hardware (Skip Login)
+        </button>
+        <p class="text-xs text-gray-500 text-center mt-4">Click above to access the dashboard immediately.</p>
     </div>
 
-    <div id="appContainer" class="hidden w-full max-w-4xl bg-gray-900 rounded-2xl p-6 shadow-lg border border-gray-800">
-        <header class="flex flex-col sm:flex-row items-center justify-between mb-8">
-            <div class="flex items-center gap-4">
-                <div class="p-2 bg-green-500 rounded-full">
+    <div id="appContainer" class="hidden w-full max-w-4xl bg-gray-900 rounded-2xl p-6 shadow-2xl border border-gray-800">
+        
+        <header class="flex flex-col sm:flex-row items-center justify-between mb-8 pb-6 border-b border-gray-800">
+            <div class="flex items-center gap-4 mb-4 sm:mb-0">
+                <div class="p-2 bg-green-500 rounded-lg shadow-lg">
                     <svg class="w-8 h-8 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 3v18M12 3c-1.105 0-2 .895-2 2s.895 2 2 2h0c1.105 0 2-.895 2-2s-.895-2-2-2zM4 14h16m-8 0a4 4 0 100-8 4 4 0 000 8z"></path></svg>
                 </div>
-                <h1 class="text-3xl font-bold text-gray-100">Hydro-AI</h1>
+                <h1 class="text-3xl font-bold text-gray-100">Hydro-AI Monitor</h1>
             </div>
             
-            <div class="flex items-center gap-4">
-                <button id="connectBtn" class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-lg flex items-center gap-2">
-                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg>
-                    Connect Arduino
-                </button>
-                <div class="text-right text-sm text-gray-400">
-                    <span id="userIdDisplay">User: Loading...</span>
-                    <button id="logout-btn" class="block text-red-400 hover:text-red-500 font-semibold ml-auto">Log Out</button>
-                </div>
-            </div>
+            <button id="connectBtn" class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-6 rounded-lg flex items-center gap-2 shadow-lg transition-all transform hover:scale-105">
+                <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg>
+                Connect Arduino
+            </button>
         </header>
 
-        <div class="flex border-b border-gray-700 mb-6">
-            <button id="tab-btn-dashboard" class="tab-button flex-1 py-3 text-lg font-semibold text-gray-400 hover:text-gray-200">Dashboard</button>
-            <button id="tab-btn-diagnostics" class="tab-button flex-1 py-3 text-lg font-semibold text-gray-400 hover:text-gray-200">Diagnostics</button>
+        <div class="mb-6 p-2 bg-black rounded text-xs text-green-400 font-mono" id="rawDataDisplay">
+            Waiting for connection... (Click Blue Button)
         </div>
 
-        <div id="dashboard-tab" class="tab-content">
-            <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
-                <div class="bg-gray-800 p-6 rounded-xl border border-gray-700">
-                    <h3 class="text-sm text-gray-400 mb-2">System Status</h3>
-                    <div class="flex items-center justify-between">
-                        <span id="systemStatus" class="text-xl font-bold text-green-400">Waiting for Connection...</span>
-                        <div id="pumpIndicator" class="w-4 h-4 rounded-full bg-red-500"></div>
-                    </div>
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+            
+            <div class="bg-gray-800 p-8 rounded-2xl border border-gray-700 relative overflow-hidden">
+                <div class="absolute top-0 right-0 p-4 opacity-10">
+                    <svg class="w-32 h-32 text-white" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M3.172 5.172a4 4 0 015.656 0L10 6.343l1.172-1.171a4 4 0 115.656 5.656L10 17.657l-6.828-6.829a4 4 0 010-5.656z" clip-rule="evenodd"></path></svg>
+                </div>
+                <h3 class="text-gray-400 text-sm font-bold uppercase tracking-wider mb-2">Soil Moisture</h3>
+                <div class="flex items-end gap-2">
+                    <span id="soil" class="text-6xl font-extrabold text-white">--%</span>
                 </div>
                 
-                <div class="bg-gray-800 p-6 rounded-xl border border-gray-700">
-                    <h3 class="text-sm text-gray-400 mb-2">Environment</h3>
-                    <span class="text-xl font-bold text-gray-100">Greenhouse</span>
+                <div class="w-full bg-gray-700 h-4 rounded-full mt-6 overflow-hidden">
+                    <div id="moistureBar" class="h-full bg-green-500 rounded-full" style="width: 0%;"></div>
                 </div>
-
-                <div class="bg-gray-800 p-6 rounded-xl border border-gray-700">
-                    <h3 class="text-sm text-gray-400 mb-2">Pump Logic</h3>
-                    <p class="text-lg font-bold text-gray-100">Auto-Sensing</p>
-                </div>
+                <p class="mt-4 text-sm">Status: <span id="status" class="text-gray-400">Unknown</span></p>
             </div>
 
-            <div class="bg-gray-800 p-6 rounded-xl border border-green-500 mb-8">
-                <h3 class="text-xl font-bold text-green-400 mb-4">⚡ Live Arduino Feed</h3>
-                <div class="grid grid-cols-2 gap-4 text-gray-400">
-                    <p>Soil Moisture: <span id="soil" class="text-white font-bold text-xl">--</span></p>
-                    <p>Temperature: <span id="temperature" class="text-white font-bold text-xl">--</span></p>
-                    <p class="col-span-2">Pump Status: <span id="status" class="text-white font-bold">Waiting for data...</span></p>
+            <div class="bg-gray-800 p-8 rounded-2xl border border-gray-700 relative overflow-hidden">
+                 <div class="absolute top-0 right-0 p-4 opacity-10">
+                    <svg class="w-32 h-32 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364-6.364l-.707-.707M6.343 17.657l-.707.707M16.364 6.364l.707-.707M6.343 6.343l.707-.707M12 8a4 4 0 100 8 4 4 0 000-8z"></path></svg>
                 </div>
+                <h3 class="text-gray-400 text-sm font-bold uppercase tracking-wider mb-2">Temperature</h3>
+                <div class="flex items-end gap-2">
+                    <span id="temperature" class="text-6xl font-extrabold text-white">--°C</span>
+                </div>
+                <p class="mt-6 text-sm text-gray-500">Live reading from DHT Sensor</p>
             </div>
 
-            <div class="bg-gray-800 p-6 rounded-xl border border-gray-700">
-                <h3 class="text-sm text-gray-400 mb-2">Visual Moisture Level</h3>
-                <div class="flex items-end gap-2 mb-2">
-                    <span id="moistureValue" class="text-4xl font-extrabold text-green-400">0%</span>
-                </div>
-                <div class="w-full bg-gray-700 h-4 rounded-full overflow-hidden">
-                    <div id="moistureBar" class="h-full bg-green-500" style="width: 0%;"></div>
-                </div>
-                <div class="mt-4">
-                     <h3 class="text-sm text-gray-400 mb-1">Temperature</h3>
-                     <span id="tempValue" class="text-2xl font-bold text-white">--</span>
-                </div>
-            </div>
-        </div>
-
-        <div id="diagnostics-tab" class="tab-content hidden">
-            <h3 class="text-2xl font-bold text-gray-100 mb-4">Diagnostics</h3>
-            <p class="text-gray-400">Ensure your Arduino is connected via USB and the baud rate is set to 9600.</p>
         </div>
     </div>
 </body>
