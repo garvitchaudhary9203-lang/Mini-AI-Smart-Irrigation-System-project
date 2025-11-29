@@ -3,16 +3,16 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Hydro-AI:SIS - Simulation with Graph</title>
+    <title>Hydro-AI:SIS - Simulation</title>
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M12 3v18M12 3c-1.105 0-2 .895-2 2s.895 2 2 2h0c1.105 0 2-.895 2-2s-.895-2-2-2zM4 14h16m-8 0a4 4 0 100-8 4 4 0 000 8z'/%3E%3C/svg%3E" type="image/svg+xml">
     <script src="https://cdn.tailwindcss.com"></script>
     
     <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.2.0/dist/tf.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+
     <script type="module">
         // MOCK/SIMULATION OVERRIDES
-        // Since the original code relies on Firebase imports which won't function without configuration/network,
-        // we override the Firebase-related calls to use local variables and mocks for the simulation.
+        // All Firebase interactions are mocked to enable instant local running.
         
         // Mock imports to prevent errors
         const initializeApp = () => ({}); 
@@ -37,9 +37,8 @@
         let db;
         let rtdb; 
         let auth;
-        let userId;
+        let userId = 'simulated-user-id'; // Pre-set userId for instant start
         
-        // Initialize sensorData with realistic starting values for the simulation
         let sensorData = {
             'zone1': { moisture: 75, temperature: 25, humidity: 60, crop: 'Lavender' },
             'zone2': { moisture: 40, temperature: 28, humidity: 55, crop: 'Zoysia Grass' },
@@ -50,7 +49,6 @@
         let isPumpOn = false;
         let activeZone = 'zone1';
 
-        // --- NEW/MODIFIED STATE FOR SIMULATION & GRAPHING ---
         let moistureHistory = {
             'zone1': Array(14).fill(75),
             'zone2': Array(14).fill(40),
@@ -67,8 +65,6 @@
         const SCALER_MEAN = [45.4859625, 22.5528125, 44.98325]; 
         const SCALER_STD = [26.002991230790848, 13.259638412861953, 14.716702057102202]; 
         
-        // ... (crops object remains the same)
-
         const crops = {
             'Lavender': {
                 photo: 'https://placehold.co/200x200/4c3b53/f3e8ff?text=Lavender',
@@ -88,22 +84,18 @@
             }
         };
 
-        // --- NEW FUNCTION: AI Model Prediction (Mocked Logic) ---
         async function aiPredict(moisture, temperature, humidity) {
             if (!tfjsModel) return 0;
-            if (moisture < 35 && temperature > 25) return 1; // Needs water
-            if (moisture > 75) return 0; // Oversaturated
-            return Math.random() > 0.5 ? 1 : 0; // Random prediction otherwise
+            if (moisture < 35 && temperature > 25) return 1;
+            if (moisture > 75) return 0; 
+            return Math.random() > 0.5 ? 1 : 0;
         }
 
-        // --- NEW FUNCTION: Model Loading (Mocked) ---
         async function loadModel() {
             console.log("MOCK: TensorFlow.js Model is considered loaded for simulation.");
             showMessage("AI Model Loaded (Simulation Mode).", "success");
-            // tfjsModel = await tf.loadLayersModel('./tfjs_model_web/model.json'); // Actual line kept commented
         }
 
-        // --- NEW FUNCTION: RTDB Display Update (Simulated) ---
         function updateRtdbDisplay(moistureRaw, tempRaw, humidityRaw, pumpStatus) {
             const percentage = moistureRaw !== null ? Math.round((1 - (moistureRaw / 4095)) * 100) : '--'; 
             document.getElementById("soil").textContent = percentage > 100 ? "100%" : `${percentage}%`;
@@ -112,255 +104,42 @@
             document.getElementById("status").textContent = pumpStatus || 'N/A';
         }
 
-        // --- MODIFIED FUNCTION: initFirebase (Mocked Login/Setup) ---
+        // --- MODIFIED FUNCTION: initFirebase for instant start ---
         async function initFirebase() {
             try {
-                // Mock Firebase Initialization
-                const user = { uid: 'simulated-user-id' };
-                userId = user.uid;
+                // Instantly show the app as there is no login
                 const formattedUid = `${userId.substring(0, 4)}-${Math.floor(Math.random() * 9000) + 1000}-!@#*`;
                 document.getElementById('userIdDisplay').textContent = `User: ${formattedUid}`;
-                document.getElementById('authContainer').classList.add('hidden');
                 document.getElementById('appContainer').classList.remove('hidden');
 
                 await loadModel(); 
                 // setupRealtimeListeners(); // Mocked out
                 // setupRtdbListener();     // Mocked out
                 startSimulation(); 
-                updateAiMode(true); // Start in AI mode
+                updateAiMode(true);
             } catch (error) {
                 console.error("Error initializing Simulation:", error);
                 document.getElementById('statusMessage').textContent = "Error: Could not start simulation.";
             }
         }
         
-        // --- MODIFIED FUNCTION: setupRtdbListener (Mocked out) ---
         async function setupRtdbListener() {
             console.log("MOCK: Realtime Database Listener bypassed.");
         }
 
-        // --- MODIFIED FUNCTION: setupRealtimeListeners (Mocked out) ---
         async function setupRealtimeListeners() {
             console.log("MOCK: Firestore Realtime Listener bypassed.");
         }
 
-        // --- MODIFIED FUNCTION: savePumpStatus (Use local state) ---
         async function savePumpStatus(status){
             isPumpOn = (status === "on");
             updatePumpStatus(isPumpOn);
-            // setDoc() is a mock function, so we call it but it does nothing
-            // await setDoc(doc(db, `/artifacts/${appId}/users/${userId}/data/settings`), { pumpStatus: status, lastManualOverride: serverTimestamp() }, { merge: true });
         }
 
-        // --- MODIFIED FUNCTION: saveAiMode (Use local state) ---
         async function saveAiMode(mode) {
             updateAiMode(mode);
-            // setDoc() is a mock function, so we call it but it does nothing
-            // await setDoc(settingsDocRef, { aiMode: mode }, { merge: true });
             showMessage(`AI Mode ${mode ? 'Enabled' : 'Disabled'} (SIMULATION).`, "success");
         }
-
-        // --- MODIFIED FUNCTION: updateSensorReadings (Also updates history) ---
-        function updateSensorReadings(zoneId, data) {
-            sensorData[zoneId] = data;
-
-            // Update history data (Last 14 samples)
-            const moisture = data.moisture !== undefined ? Math.round(data.moisture) : 0;
-            moistureHistory[zoneId].push(moisture);
-            if (moistureHistory[zoneId].length > 14) {
-                moistureHistory[zoneId].shift(); // Remove the oldest point
-            }
-
-            const moistureCard = document.getElementById(`${zoneId}-moisture-card`);
-            if (moistureCard) {
-                const moistureValue = moistureCard.querySelector('.moisture-value');
-                const moistureBar = moistureCard.querySelector('.moisture-bar');
-                
-                moistureValue.textContent = `${moisture}%`;
-                moistureBar.style.width = `${moisture}%`;
-                
-                moistureBar.classList.remove('bg-green-500', 'bg-yellow-500', 'bg-red-500');
-                if (moisture > 60) moistureBar.classList.add('bg-green-500');
-                else if (moisture > 30) moistureBar.classList.add('bg-yellow-500');
-                else moistureBar.classList.add('bg-red-500');
-
-                const statusIndicator = moistureCard.querySelector('.status-indicator');
-                statusIndicator.classList.remove('bg-green-500', 'bg-yellow-500', 'bg-red-500', 'animate-pulse');
-                if (moisture > 60) statusIndicator.classList.add('bg-green-500', 'animate-pulse');
-                else if (moisture > 30) statusIndicator.classList.add('bg-yellow-500');
-                else statusIndicator.classList.add('bg-red-500');
-            }
-
-            if (zoneId === activeZone) {
-                document.getElementById('moistureValue').textContent = `${moisture}%`;
-                document.getElementById('moistureBar').style.width = `${moisture}%`;
-                document.getElementById('moistureBar').className = `h-full rounded-full ${moisture > 60 ? 'bg-green-500' : moisture > 30 ? 'bg-yellow-500' : 'bg-red-500'}`;
-                document.getElementById('tempValue').textContent = `${data.temperature !== undefined ? Math.round(data.temperature) : '--'}°C`;
-                document.getElementById('humidityValue').textContent = `${data.humidity !== undefined ? Math.round(data.humidity) : '--'}%`;
-                
-                // Update the chart for the active zone
-                updateMoistureChart(activeZone);
-            }
-        }
-
-        // --- NEW FUNCTION: Create/Update Chart ---
-        function updateMoistureChart(zoneId) {
-            const chartData = moistureHistory[zoneId];
-            const ctx = document.getElementById('moistureChart');
-
-            if (!ctx) return;
-            
-            // Create the chart if it doesn't exist
-            if (!moistureChart) {
-                ctx.parentElement.innerHTML = '<canvas id="moistureChart" class="w-full h-48 bg-gray-700 rounded-lg"></canvas>';
-                const newCtx = document.getElementById('moistureChart');
-                
-                moistureChart = new Chart(newCtx, {
-                    type: 'line',
-                    data: {
-                        labels: Array(14).fill('').map((_, i) => (i + 1) * 5 + 's ago'),
-                        datasets: [{
-                            label: 'Soil Moisture (%)',
-                            data: chartData,
-                            borderColor: '#10b981', // green-500
-                            borderWidth: 2,
-                            tension: 0.4,
-                            pointRadius: 3,
-                            fill: true,
-                            backgroundColor: 'rgba(16, 185, 129, 0.1)',
-                        }]
-                    },
-                    options: {
-                        responsive: true,
-                        maintainAspectRatio: false,
-                        scales: {
-                            y: {
-                                min: 0,
-                                max: 100,
-                                ticks: { color: '#9ca3af' },
-                                grid: { color: '#374151' }
-                            },
-                            x: {
-                                ticks: { color: '#9ca3af' },
-                                grid: { display: false }
-                            }
-                        },
-                        plugins: {
-                            legend: { display: false },
-                            title: { display: false }
-                        }
-                    }
-                });
-            } else {
-                // Update existing chart data
-                moistureChart.data.datasets[0].data = chartData;
-                moistureChart.data.labels = Array(chartData.length).fill('').map((_, i) => (chartData.length - i) * 5 + 's ago').reverse();
-                moistureChart.update('none'); // 'none' skips animation for continuous updates
-            }
-        }
-
-
-        // --- MODIFIED FUNCTION: startSimulation for Continuous Random Walk ---
-        let sensorInterval;
-        function startSimulation() {
-            // No need for Firebase check in simulation mode
-            setInterval(updateWeatherData, 30000);
-            updateWeatherData(); 
-
-            sensorInterval = setInterval(async () => {
-                // 1. Simulate RTDB Live Feed (ESP32 Raw Data)
-                // Random walk for moisture (0-4095). Closer to 4095 is dry (higher number).
-                rtdbMoistureRaw += Math.floor(Math.random() * 200) - 100;
-                if (isPumpOn) { rtdbMoistureRaw -= 50; } // If pump is on, moisture raw reading decreases (gets wetter)
-                rtdbMoistureRaw = Math.min(4095, Math.max(0, rtdbMoistureRaw));
-                
-                rtdbTemp += Math.random() * 0.5 - 0.25;
-                rtdbHumidity += Math.random() * 1 - 0.5;
-                rtdbTemp = Math.round(Math.min(40, Math.max(15, rtdbTemp)));
-                rtdbHumidity = Math.round(Math.min(90, Math.max(20, rtdbHumidity)));
-                
-                updateRtdbDisplay(rtdbMoistureRaw, rtdbTemp, rtdbHumidity, isPumpOn ? 'ON' : 'OFF');
-
-                // 2. Simulate Firestore Sensor Data (Processed Data for each Zone)
-                for (const zone in sensorData) {
-                    let currentData = sensorData[zone];
-                    let moisture = currentData.moisture;
-                    let temperature = currentData.temperature;
-                    let humidity = currentData.humidity;
-
-                    // Apply a random walk to the moisture reading
-                    moisture += (Math.random() * 5) - 2.5;
-                    
-                    // If the pump is ON, moisture increases
-                    if (isPumpOn) {
-                        moisture += 3; 
-                    } 
-                    
-                    // Apply environmental effect based on current weather
-                    if (currentWeatherData.condition === "Sunny" && moisture > 20) moisture -= 0.5;
-                    if (currentWeatherData.condition === "Rain Expected" && moisture < 80) moisture += 2;
-                    
-                    // Keep values within a realistic range
-                    moisture = Math.min(100, Math.max(5, moisture));
-                    
-                    // Apply slight changes to Temp and Humidity for the zone
-                    temperature += Math.random() * 0.3 - 0.15;
-                    humidity += Math.random() * 0.5 - 0.25;
-                    temperature = Math.round(temperature * 10) / 10;
-                    humidity = Math.round(humidity * 10) / 10;
-
-                    // Update the local state
-                    const sensorDataPoint = {
-                        moisture: moisture,
-                        temperature: temperature,
-                        humidity: humidity,
-                        crop: currentData.crop,
-                        timestamp: serverTimestamp()
-                    };
-                    
-                    sensorData[zone] = sensorDataPoint;
-
-                    // Update the UI immediately (replaces onSnapshot)
-                    updateSensorReadings(zone, sensorDataPoint);
-                }
-
-                // 3. Run AI Logic
-                simulateAiLogic();
-                updateDiagnostics();
-                
-            }, 5000); // Update every 5 seconds
-        }
-
-        // --- MODIFIED FUNCTION: setActiveZone (Ensures chart is updated on switch) ---
-        function setActiveZone(zoneId) {
-            activeZone = zoneId;
-            const data = sensorData[zoneId];
-            if (data) {
-                const moisture = data.moisture !== undefined ? Math.round(data.moisture) : 0;
-                document.getElementById('zoneDetailTitle').textContent = `${data.crop} - Zone ${zoneId.replace('zone', '')}`;
-                document.getElementById('moistureValue').textContent = `${moisture}%`;
-                document.getElementById('moistureBar').style.width = `${moisture}%`;
-                document.getElementById('moistureBar').className = `h-full rounded-full ${moisture > 60 ? 'bg-green-500' : moisture > 30 ? 'bg-yellow-500' : 'bg-red-500'}`;
-                document.getElementById('tempValue').textContent = `${data.temperature !== undefined ? Math.round(data.temperature) : '--'}°C`;
-                document.getElementById('humidityValue').textContent = `${data.humidity !== undefined ? Math.round(data.humidity) : '--'}%`;
-                
-                updateMoistureChart(activeZone); // Ensure chart is drawn/updated for the new zone
-            }
-        }
-        
-        // ... (The rest of the original code remains the same, except for the mocks above)
-
-        setLogLevel('debug');
-
-        // ... (crops object)
-
-        // The rest of the functions (updatePumpStatus, updateAiMode, updateWeatherData, 
-        // updateCropsAndCropsInfo, simulateAiLogic, updateDiagnostics, addMessage, 
-        // generateAiResponse, handleChatInput, handleVoiceInput, getDiagnosticsSummary, 
-        // getCropInformation, showMessage, updateActiveTab, updateAuthView, 
-        // handleEmailSignUp, handleEmailLogin, handleGoogleLogin, handlePasswordReset, 
-        // handleSignOut) are kept as in the original code, adapted to use the mock/simulated 
-        // functions where Firebase was previously called.
 
         function updatePumpStatus(isOn) {
             isPumpOn = isOn;
@@ -398,6 +177,160 @@
                 manualControls.classList.remove('hidden');
                 document.getElementById('aiRecommendations').classList.add('hidden');
             }
+        }
+
+        function updateSensorReadings(zoneId, data) {
+            sensorData[zoneId] = data;
+
+            const moisture = data.moisture !== undefined ? Math.round(data.moisture) : 0;
+            moistureHistory[zoneId].push(moisture);
+            if (moistureHistory[zoneId].length > 14) {
+                moistureHistory[zoneId].shift(); 
+            }
+
+            const moistureCard = document.getElementById(`${zoneId}-moisture-card`);
+            if (moistureCard) {
+                const moistureValue = moistureCard.querySelector('.moisture-value');
+                const moistureBar = moistureCard.querySelector('.moisture-bar');
+                
+                moistureValue.textContent = `${moisture}%`;
+                moistureBar.style.width = `${moisture}%`;
+                
+                moistureBar.classList.remove('bg-green-500', 'bg-yellow-500', 'bg-red-500');
+                if (moisture > 60) moistureBar.classList.add('bg-green-500');
+                else if (moisture > 30) moistureBar.classList.add('bg-yellow-500');
+                else moistureBar.classList.add('bg-red-500');
+
+                const statusIndicator = moistureCard.querySelector('.status-indicator');
+                statusIndicator.classList.remove('bg-green-500', 'bg-yellow-500', 'bg-red-500', 'animate-pulse');
+                if (moisture > 60) statusIndicator.classList.add('bg-green-500', 'animate-pulse');
+                else if (moisture > 30) statusIndicator.classList.add('bg-yellow-500');
+                else statusIndicator.classList.add('bg-red-500');
+            }
+
+            if (zoneId === activeZone) {
+                document.getElementById('moistureValue').textContent = `${moisture}%`;
+                document.getElementById('moistureBar').style.width = `${moisture}%`;
+                document.getElementById('moistureBar').className = `h-full rounded-full ${moisture > 60 ? 'bg-green-500' : moisture > 30 ? 'bg-yellow-500' : 'bg-red-500'}`;
+                document.getElementById('tempValue').textContent = `${data.temperature !== undefined ? Math.round(data.temperature) : '--'}°C`;
+                document.getElementById('humidityValue').textContent = `${data.humidity !== undefined ? Math.round(data.humidity) : '--'}%`;
+                
+                updateMoistureChart(activeZone);
+            }
+        }
+
+        function updateMoistureChart(zoneId) {
+            const chartData = moistureHistory[zoneId];
+            const ctx = document.getElementById('moistureChart');
+
+            if (!ctx) return;
+            
+            if (!moistureChart) {
+                ctx.parentElement.innerHTML = '<canvas id="moistureChart" class="w-full h-48 bg-gray-700 rounded-lg"></canvas>';
+                const newCtx = document.getElementById('moistureChart');
+                
+                moistureChart = new Chart(newCtx, {
+                    type: 'line',
+                    data: {
+                        labels: Array(14).fill('').map((_, i) => (i + 1) * 5 + 's ago'),
+                        datasets: [{
+                            label: 'Soil Moisture (%)',
+                            data: chartData,
+                            borderColor: '#10b981', 
+                            borderWidth: 2,
+                            tension: 0.4,
+                            pointRadius: 3,
+                            fill: true,
+                            backgroundColor: 'rgba(16, 185, 129, 0.1)',
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        scales: {
+                            y: {
+                                min: 0,
+                                max: 100,
+                                ticks: { color: '#9ca3af' },
+                                grid: { color: '#374151' }
+                            },
+                            x: {
+                                ticks: { color: '#9ca3af' },
+                                grid: { display: false }
+                            }
+                        },
+                        plugins: {
+                            legend: { display: false },
+                            title: { display: false }
+                        }
+                    }
+                });
+            } else {
+                moistureChart.data.datasets[0].data = chartData;
+                moistureChart.data.labels = Array(chartData.length).fill('').map((_, i) => (chartData.length - i) * 5 + 's ago').reverse();
+                moistureChart.update('none'); 
+            }
+        }
+
+        let sensorInterval;
+        function startSimulation() {
+            setInterval(updateWeatherData, 30000);
+            updateWeatherData(); 
+
+            sensorInterval = setInterval(async () => {
+                // 1. Simulate RTDB Live Feed (ESP32 Raw Data)
+                rtdbMoistureRaw += Math.floor(Math.random() * 200) - 100;
+                if (isPumpOn) { rtdbMoistureRaw -= 50; } 
+                rtdbMoistureRaw = Math.min(4095, Math.max(0, rtdbMoistureRaw));
+                
+                rtdbTemp += Math.random() * 0.5 - 0.25;
+                rtdbHumidity += Math.random() * 1 - 0.5;
+                rtdbTemp = Math.round(Math.min(40, Math.max(15, rtdbTemp)));
+                rtdbHumidity = Math.round(Math.min(90, Math.max(20, rtdbHumidity)));
+                
+                updateRtdbDisplay(rtdbMoistureRaw, rtdbTemp, rtdbHumidity, isPumpOn ? 'ON' : 'OFF');
+
+                // 2. Simulate Firestore Sensor Data (Processed Data for each Zone)
+                for (const zone in sensorData) {
+                    let currentData = sensorData[zone];
+                    let moisture = currentData.moisture;
+                    let temperature = currentData.temperature;
+                    let humidity = currentData.humidity;
+
+                    moisture += (Math.random() * 5) - 2.5;
+                    
+                    if (isPumpOn) {
+                        moisture += 3; 
+                    } 
+                    
+                    if (currentWeatherData.condition === "Sunny" && moisture > 20) moisture -= 0.5;
+                    if (currentWeatherData.condition === "Rain Expected" && moisture < 80) moisture += 2;
+                    
+                    moisture = Math.min(100, Math.max(5, moisture));
+                    
+                    temperature += Math.random() * 0.3 - 0.15;
+                    humidity += Math.random() * 0.5 - 0.25;
+                    temperature = Math.round(temperature * 10) / 10;
+                    humidity = Math.round(humidity * 10) / 10;
+
+                    const sensorDataPoint = {
+                        moisture: moisture,
+                        temperature: temperature,
+                        humidity: humidity,
+                        crop: currentData.crop,
+                        timestamp: serverTimestamp()
+                    };
+                    
+                    sensorData[zone] = sensorDataPoint;
+
+                    updateSensorReadings(zone, sensorDataPoint);
+                }
+
+                // 3. Run AI Logic
+                simulateAiLogic();
+                updateDiagnostics();
+                
+            }, 5000); 
         }
         
         function updateWeatherData() {
@@ -453,7 +386,6 @@
         }
 
         async function simulateAiLogic() {
-            // Mock getDoc for settingsSnap
             const settingsSnap = { data: () => ({ aiMode: document.getElementById('aiModeToggle').checked }) }; 
             const aiModeToggle = settingsSnap.data().aiMode;
             
@@ -471,12 +403,10 @@
             const temperature = predictionZone.temperature;
             const humidity = predictionZone.humidity;
             
-            // 1. Get Prediction from the mocked model logic
             const predictionStatus = await aiPredict(moisture, temperature, humidity); 
             const pumpAction = predictionStatus === 1 ? "on" : "off";
             const zoneName = predictionZone.crop;
             
-            // 2. Determine AI Message and action
             let message = "";
             let action = false;
 
@@ -551,7 +481,6 @@
             messagesContainer.scrollTop = messagesContainer.scrollHeight;  
         }
 
-        // --- Mock AI Response function (Gemini API bypass) ---
         async function generateAiResponse(userInput) {
             const thinkingMessage = "Hydro-AI is thinking...";
             addMessage(thinkingMessage, false);
@@ -614,31 +543,6 @@
             addMessage("Voice input is currently not active in this simulation, but it would work using the browser's SpeechRecognition API. What would you like to ask?", false);
         }
 
-        function getDiagnosticsSummary() {
-            let problemZones = [];
-            for (const zone in sensorData) {
-                const data = sensorData[zone];
-                if (data.moisture !== undefined && (data.moisture < 20 || data.moisture > 80)) {
-                    problemZones.push(data.crop);
-                }
-            }
-
-            if (problemZones.length > 0) {
-                return `There are some issues detected. Low or high moisture levels were found in the following zones: ${problemZones.join(', ')}. Please check the Diagnostics tab for more details.`;
-            } else {
-                return "All systems are running normally. No issues have been detected.";
-            }
-        }
-
-        function getCropInformation(cropName) {
-            const crop = crops[cropName];
-            if (crop) {
-                return `Here is some information about ${cropName}: ${crop.description}`;
-            } else {
-                return `I'm sorry, I don't have information on a crop named ${cropName}. The available crops are Lavender, Zoysia Grass, Tomatoes, and Apple Trees.`;
-            }
-        }
-
         function showMessage(msg, type = "info") {
             const messageBox = document.getElementById('statusMessage');
             messageBox.textContent = msg;
@@ -664,18 +568,23 @@
             document.getElementById(`tab-btn-${tabName}`).classList.add('border-green-500', 'text-green-500');
         }
 
-        function updateAuthView(viewName) {
-            document.querySelectorAll('.auth-view').forEach(el => el.classList.add('hidden'));
-            document.getElementById(viewName).classList.remove('hidden');
+        function setActiveZone(zoneId) {
+            activeZone = zoneId;
+            const data = sensorData[zoneId];
+            if (data) {
+                const moisture = data.moisture !== undefined ? Math.round(data.moisture) : 0;
+                document.getElementById('zoneDetailTitle').textContent = `${data.crop} - Zone ${zoneId.replace('zone', '')}`;
+                document.getElementById('moistureValue').textContent = `${moisture}%`;
+                document.getElementById('moistureBar').style.width = `${moisture}%`;
+                document.getElementById('moistureBar').className = `h-full rounded-full ${moisture > 60 ? 'bg-green-500' : moisture > 30 ? 'bg-yellow-500' : 'bg-red-500'}`;
+                document.getElementById('tempValue').textContent = `${data.temperature !== undefined ? Math.round(data.temperature) : '--'}°C`;
+                document.getElementById('humidityValue').textContent = `${data.humidity !== undefined ? Math.round(data.humidity) : '--'}%`;
+                
+                updateMoistureChart(activeZone);
+            }
         }
 
-        // Mock Auth Handlers
-        async function handleEmailSignUp(e) { e.preventDefault(); showMessage("MOCK: Signup successful. Logging you in...", "success"); updateAuthView('login'); }
-        async function handleEmailLogin(e) { e.preventDefault(); showMessage("MOCK: Logged in successfully!", "success"); initFirebase(); } 
-        async function handleGoogleLogin() { showMessage("MOCK: Logged in with Google successfully!", "success"); initFirebase(); }
-        async function handlePasswordReset() { showMessage("MOCK: Password reset email sent.", "success"); }
-        async function handleSignOut() { showMessage("MOCK: Signed out successfully.", "success"); document.getElementById('appContainer').classList.add('hidden'); document.getElementById('authContainer').classList.remove('hidden'); updateAuthView('login'); }
-
+        // --- AUTH FUNCTIONS REMOVED. Only the Sign Out button handler is modified below. ---
 
         window.onload = function() {
             initFirebase();
@@ -734,216 +643,155 @@
                 document.getElementById('zoneDetailView').classList.add('hidden');
             });
             
-            // Auth listeners
-            document.getElementById('login-form').addEventListener('submit', handleEmailLogin);
-            document.getElementById('signup-form').addEventListener('submit', handleEmailSignUp);
-            document.getElementById('google-login-btn').addEventListener('click', handleGoogleLogin);
-            document.getElementById('forgot-password-link').addEventListener('click', handlePasswordReset);
-            document.getElementById('logout-btn').addEventListener('click', handleSignOut);
-            
-            document.getElementById('showSignup').addEventListener('click', (e) => {
-                e.preventDefault();
-                updateAuthView('signup');
-            });
-            document.getElementById('showLogin').addEventListener('click', (e) => {
-                e.preventDefault();
-                updateAuthView('login');
+            // Replaced all auth listeners with a mock sign-out button action
+            document.getElementById('logout-btn').addEventListener('click', () => {
+                showMessage("Signed out successfully (SIMULATION ENDED).", "success"); 
+                document.getElementById('appContainer').classList.add('hidden');
+                document.body.innerHTML = '<h1 class="text-3xl text-gray-400">Simulation Ended. Reload page to restart.</h1>';
             });
 
-            // Initial chart setup when the detail view might be shown
             updateMoistureChart(activeZone); 
         };
     </script>
     <style>
-        /* ... (CSS is unchanged) ... */
-        body[data-theme='dark'] {
-            --bg-color: #0d111c;
-            --text-color: #e2e8f0;
-            --card-bg: #161b22;
-            --border-color: #24292f;
-            --input-bg: #1a1f26;
-            --input-border: #30363d;
-            --button-bg-primary: #1e7145;
-            --button-hover-primary: #15623e;
-            --text-secondary: #94a3b8;
-        }
+        body[data-theme='dark'] {
+            --bg-color: #0d111c;
+            --text-color: #e2e8f0;
+            --card-bg: #161b22;
+            --border-color: #24292f;
+            --input-bg: #1a1f26;
+            --input-border: #30363d;
+            --button-bg-primary: #1e7145;
+            --button-hover-primary: #15623e;
+            --text-secondary: #94a3b8;
+        }
 
-        body[data-theme='light'] {
-            --bg-color: #ffffff;
-            --text-color: #1f2937;
-            --card-bg: #f3f4f6;
-            --border-color: #d1d5db;
-            --input-bg: #e5e7eb;
-            --input-border: #9ca3af;
-            --button-bg-primary: #10b981;
-            --button-hover-primary: #059669;
-            --text-secondary: #6b7280;
-        }
-        
-        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700&display=swap');
-        
-        body {
-            font-family: 'Inter', sans-serif;
-            background-color: var(--bg-color);
-            color: var(--text-color);
-            transition: background-color 0.3s, color 0.3s;
-        }
-        
-        .bg-gray-950, .bg-gray-900, .bg-gray-800, .bg-gray-700 {
-            background-color: var(--card-bg);
-            color: var(--text-color);
-            transition: background-color 0.3s, color 0.3s;
-        }
-        .text-gray-200, .text-gray-100 {
-            color: var(--text-color);
-            transition: color 0.3s;
-        }
-        .text-gray-400, .text-gray-500 {
-            color: var(--text-secondary);
-            transition: color 0.3s;
-        }
-        .border-gray-800, .border-gray-700 {
-            border-color: var(--border-color);
-            transition: border-color 0.3s;
-        }
-        
-        input, .bg-gray-900, .bg-gray-800, .bg-gray-700 {
-            background-color: var(--input-bg);
-            color: var(--text-color);
-            border-color: var(--input-border);
-            transition: background-color 0.3s, color 0.3s, border-color 0.3s;
-        }
+        body[data-theme='light'] {
+            --bg-color: #ffffff;
+            --text-color: #1f2937;
+            --card-bg: #f3f4f6;
+            --border-color: #d1d5db;
+            --input-bg: #e5e7eb;
+            --input-border: #9ca3af;
+            --button-bg-primary: #10b981;
+            --button-hover-primary: #059669;
+            --text-secondary: #6b7280;
+        }
+        
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700&display=swap');
+        
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: var(--bg-color);
+            color: var(--text-color);
+            transition: background-color 0.3s, color 0.3s;
+        }
+        
+        .bg-gray-950, .bg-gray-900, .bg-gray-800, .bg-gray-700 {
+            background-color: var(--card-bg);
+            color: var(--text-color);
+            transition: background-color 0.3s, color 0.3s;
+        }
+        .text-gray-200, .text-gray-100 {
+            color: var(--text-color);
+            transition: color 0.3s;
+        }
+        .text-gray-400, .text-gray-500 {
+            color: var(--text-secondary);
+            transition: color 0.3s;
+        }
+        .border-gray-800, .border-gray-700 {
+            border-color: var(--border-color);
+            transition: border-color 0.3s;
+        }
+        
+        input, .bg-gray-900, .bg-gray-800, .bg-gray-700 {
+            background-color: var(--input-bg);
+            color: var(--text-color);
+            border-color: var(--input-border);
+            transition: background-color 0.3s, color 0.3s, border-color 0.3s;
+        }
 
-        .bg-green-600 {
-            background-color: var(--button-bg-primary);
-            transition: background-color 0.3s;
-        }
-        .hover\:bg-green-700:hover {
-            background-color: var(--button-hover-primary);
-        }
-        .text-green-400 {
-            color: var(--button-bg-primary);
-        }
-        .hover\:text-green-400:hover {
-            color: var(--button-hover-primary);
-        }
+        .bg-green-600 {
+            background-color: var(--button-bg-primary);
+            transition: background-color 0.3s;
+        }
+        .hover\:bg-green-700:hover {
+            background-color: var(--button-hover-primary);
+        }
+        .text-green-400 {
+            color: var(--button-bg-primary);
+        }
+        .hover\:text-green-400:hover {
+            color: var(--button-hover-primary);
+        }
 
-        .mode-toggle-btn {
-            position: relative;
-            display: inline-block;
-            width: 50px;
-            height: 28px;
-            cursor: pointer;
-            border-radius: 9999px;
-            background-color: var(--card-bg);
-            border: 1px solid var(--border-color);
-            transition: all 0.3s ease;
-        }
-        
-        .mode-toggle-btn::before {
-            content: '';
-            position: absolute;
-            left: 2px;
-            top: 2px;
-            width: 22px;
-            height: 22px;
-            border-radius: 9999px;
-            background-color: var(--text-color);
-            transition: transform 0.3s ease;
-        }
-        
-        body[data-theme='light'] .mode-toggle-btn::before {
-            transform: translateX(22px);
-        }
+        .mode-toggle-btn {
+            position: relative;
+            display: inline-block;
+            width: 50px;
+            height: 28px;
+            cursor: pointer;
+            border-radius: 9999px;
+            background-color: var(--card-bg);
+            border: 1px solid var(--border-color);
+            transition: all 0.3s ease;
+        }
+        
+        .mode-toggle-btn::before {
+            content: '';
+            position: absolute;
+            left: 2px;
+            top: 2px;
+            width: 22px;
+            height: 22px;
+            border-radius: 9999px;
+            background-color: var(--text-color);
+            transition: transform 0.3s ease;
+        }
+        
+        body[data-theme='light'] .mode-toggle-btn::before {
+            transform: translateX(22px);
+        }
 
-        .mode-toggle-btn .icon {
-            position: absolute;
-            top: 50%;
-            transform: translateY(-50%);
-            width: 18px;
-            height: 18px;
-            transition: opacity 0.3s ease;
-        }
-        
-        .mode-toggle-btn .moon-icon {
-            left: 5px;
-            opacity: 1;
-        }
-        
-        body[data-theme='light'] .mode-toggle-btn .moon-icon {
-            opacity: 0;
-        }
-        
-        .mode-toggle-btn .sun-icon {
-            right: 5px;
-            opacity: 0;
-        }
-        
-        body[data-theme='light'] .mode-toggle-btn .sun-icon {
-            opacity: 1;
-        }
-        
-        #moistureBar {
-            transition: width 0.5s ease-in-out;
-        }
-        .tab-button {
-            border-bottom: 2px solid transparent;
-            transition: all 0.2s ease-in-out;
-        }
+        .mode-toggle-btn .icon {
+            position: absolute;
+            top: 50%;
+            transform: translateY(-50%);
+            width: 18px;
+            height: 18px;
+            transition: opacity 0.3s ease;
+        }
+        
+        .mode-toggle-btn .moon-icon {
+            left: 5px;
+            opacity: 1;
+        }
+        
+        body[data-theme='light'] .mode-toggle-btn .moon-icon {
+            opacity: 0;
+        }
+        
+        .mode-toggle-btn .sun-icon {
+            right: 5px;
+            opacity: 0;
+        }
+        
+        body[data-theme='light'] .mode-toggle-btn .sun-icon {
+            opacity: 1;
+        }
+        
+        #moistureBar {
+            transition: width 0.5s ease-in-out;
+        }
+        .tab-button {
+            border-bottom: 2px solid transparent;
+            transition: all 0.2s ease-in-out;
+        }
     </style>
 </head>
 <body data-theme="dark" class="min-h-screen p-4 sm:p-8 flex items-center justify-center">
     
-    <div id="authContainer" class="w-full max-w-sm bg-gray-900 rounded-2xl p-6 sm:p-10 shadow-lg border border-gray-800">
-        <div id="login" class="auth-view">
-            <h2 class="text-3xl font-bold text-center text-gray-100 mb-6">Log In (SIMULATION)</h2>
-            <form id="login-form">
-                <div class="mb-4">
-                    <input type="email" id="loginEmail" placeholder="Email (any value logs in)" class="w-full p-3 rounded-lg bg-gray-800 text-gray-200 border border-gray-700 focus:outline-none focus:ring-2 focus:ring-green-500" required>
-                </div>
-                <div class="mb-6">
-                    <input type="password" id="loginPassword" placeholder="Password (any value logs in)" class="w-full p-3 rounded-lg bg-gray-800 text-gray-200 border border-gray-700 focus:outline-none focus:ring-2 focus:ring-green-500" required>
-                </div>
-                <button type="submit" class="w-full bg-green-600 hover:bg-green-700 text-white font-bold py-3 rounded-lg transition-colors">Log In</button>
-            </form>
-            <div class="text-center mt-4 text-gray-400 text-sm">
-                <a href="#" id="forgot-password-link" class="hover:text-green-400">Forgot Password?</a>
-            </div>
-            <div class="text-center my-4 text-gray-500">
-                OR
-            </div>
-            <div class="flex flex-col space-y-3">
-                <button id="google-login-btn" class="w-full flex items-center justify-center gap-2 bg-gray-800 hover:bg-gray-700 text-white font-bold py-3 rounded-lg transition-colors border border-gray-700">
-                    <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-                        <path d="M22.56 12.28c0-.78-.07-1.54-.2-2.28H12v4.51h6.24c-.28 1.48-1.15 2.76-2.52 3.63v3.29h4.21a11.16 11.16 0 003.57-8.15z" />
-                        <path d="M12 23.99c2.83 0 5.19-.93 6.92-2.52l-4.2-3.29c-1.15.77-2.6.99-4.32.99-3.32 0-6.14-2.23-7.14-5.22H.67v3.29a12 12 0 0011.33 8.75z" />
-                        <path d="M4.86 14.12c-.5-.14-1.01-.2-1.52-.2-.51 0-1.02.06-1.52.2V10.83H.67a12.02 12.02 0 000 6.34h1.15a8.77 8.77 0 013.04-4.22z" />
-                        <path d="M12 4.86c1.69 0 3.2.58 4.39 1.77l3.77-3.77A11.96 11.96 0 0012 .13C5.64.13.38 5.4.38 12h1.15c0-4.6 3.06-8.52 7.29-9.87z" />
-                    </svg>
-                    <span>Sign in with Google</span>
-                </button>
-            </div>
-            <div class="text-center mt-6 text-gray-400">
-                Don't have an account? <a href="#" id="showSignup" class="text-green-400 font-semibold hover:underline">Sign up</a>
-            </div>
-        </div>
-        <div id="signup" class="auth-view hidden">
-            <h2 class="text-3xl font-bold text-center text-gray-100 mb-6">Sign Up</h2>
-            <form id="signup-form">
-                <div class="mb-4">
-                    <input type="email" id="signupEmail" placeholder="Email" class="w-full p-3 rounded-lg bg-gray-800 text-gray-200 border border-gray-700 focus:outline-none focus:ring-2 focus:ring-green-500" required>
-                </div>
-                <div class="mb-6">
-                    <input type="password" id="signupPassword" placeholder="Password" class="w-full p-3 rounded-lg bg-gray-800 text-gray-200 border border-gray-700 focus:outline-none focus:ring-2 focus:ring-green-500" required>
-                </div>
-                <button type="submit" class="w-full bg-green-600 hover:bg-green-700 text-white font-bold py-3 rounded-lg transition-colors">Sign Up</button>
-            </form>
-            <div class="text-center mt-6 text-gray-400">
-                Already have an account? <a href="#" id="showLogin" class="text-green-400 font-semibold hover:underline">Log In</a>
-            </div>
-        </div>
-    </div>
-
     <div id="appContainer" class="hidden w-full max-w-4xl bg-gray-900 rounded-2xl p-6 sm:p-10 shadow-lg border border-gray-800">
         <header class="flex flex-col sm:flex-row items-start sm:items-center justify-between mb-8">
             <div class="flex items-center gap-4 mb-4 sm:mb-0">
@@ -965,7 +813,7 @@
                 </label>
                 <div class="flex flex-col items-start sm:items-end text-sm text-gray-400">
                     <span id="userIdDisplay" class="truncate">User: Loading...</span>
-                    <button id="logout-btn" class="mt-1 text-red-400 hover:text-red-500 font-semibold">Log Out</button>
+                    <button id="logout-btn" class="mt-1 text-red-400 hover:text-red-500 font-semibold">End Simulation</button>
                 </div>
             </div>
         </header>
@@ -1115,7 +963,7 @@
                     <div class="w-full h-48 bg-gray-700 rounded-lg flex items-center justify-center text-gray-500 italic">
                         <canvas id="moistureChart" class="w-full h-full"></canvas>
                     </div>
-                    </div>
+                </div>
             </div>
         </div>
         
