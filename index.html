@@ -123,6 +123,45 @@
                 document.getElementById('appContainer').classList.remove('hidden');
             });
         };
+        // -------------------------------
+// FAKE DATA GENERATOR (2 minutes)
+// -------------------------------
+
+// Run fake data ONLY when NOT connected to Arduino
+let fakeMode = true;
+
+// Generates fake values & sends them to UI using your parseArduinoData()
+function generateFakeData() {
+    if (!fakeMode) return;
+
+    const fakeSoilRaw = Math.floor(Math.random() * 1023);        // 0–1023
+    const fakeTemp = (Math.random() * (32 - 20) + 20).toFixed(2); // 20–32°C
+
+    const fakeString = `Data,${fakeSoilRaw},${fakeTemp}`;
+    console.log("FAKE:", fakeString);
+
+    parseArduinoData(fakeString);
+}
+
+// Start fake updates every 1 sec
+let fakeInterval = setInterval(generateFakeData, 1000);
+
+// Stop fake mode after 2 minutes
+setTimeout(() => {
+    fakeMode = false;
+    clearInterval(fakeInterval);
+    console.log("⛔ Fake data stopped after 2 minutes");
+}, 2 * 60 * 1000);
+
+
+// Disable fake mode when Arduino connects
+const originalConnectFunc = connectToSerial;
+connectToSerial = async function() {
+    fakeMode = false;
+    clearInterval(fakeInterval);
+    console.log("Real serial connected → Fake mode OFF");
+    return originalConnectFunc();
+};
     </script>
 
     <style>
@@ -194,3 +233,4 @@
     </div>
 </body>
 </html>
+
