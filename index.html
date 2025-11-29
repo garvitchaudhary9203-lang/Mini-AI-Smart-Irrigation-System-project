@@ -3,207 +3,222 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Hydro-AI: Live Serial Monitor</title>
+    <title>Hydro-AI: Simulation Mode</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script type="module">
-        // --- SERIAL PORT VARIABLES ---
+        // --- VARIABLES ---
         let port;
         let reader;
-        let isConnected = false;
+        let simulationInterval;
 
-        // --- CONNECT TO ARDUINO ---
+        // --- 1. REAL HARDWARE CONNECTION ---
         async function connectToSerial() {
             if ("serial" in navigator) {
                 try {
-                    // 1. Request Port
                     port = await navigator.serial.requestPort();
-                    // 2. Open Port (9600 matches Arduino code)
                     await port.open({ baudRate: 9600 });
                     
-                    isConnected = true;
-                    document.getElementById('connectBtn').textContent = "Connected! Receiving Data...";
-                    document.getElementById('connectBtn').classList.remove('bg-blue-600');
-                    document.getElementById('connectBtn').classList.add('bg-green-600', 'animate-pulse');
+                    // Stop simulation if running
+                    clearInterval(simulationInterval);
                     
-                    // 3. Start Reading Loop
+                    document.getElementById('connectBtn').textContent = "Hardware Connected";
+                    document.getElementById('connectBtn').className = "bg-green-600 text-white font-bold py-3 px-6 rounded-lg shadow-lg";
+                    document.getElementById('simStatus').classList.add('hidden');
+
                     readLoop();
                 } catch (err) {
-                    console.error('Connection Error:', err);
                     alert("Failed to connect: " + err);
                 }
             } else {
-                alert('Web Serial API is not supported in this browser. Please use Google Chrome or Microsoft Edge.');
+                alert('Web Serial API not supported. Use Chrome/Edge.');
             }
         }
 
-        // --- READ LOOP ---
         async function readLoop() {
             const textDecoder = new TextDecoderStream();
             const readableStreamClosed = port.readable.pipeTo(textDecoder.writable);
             reader = textDecoder.readable.getReader();
-            
             let buffer = "";
 
-            try {
-                while (true) {
-                    const { value, done } = await reader.read();
-                    if (done) {
-                        break;
-                    }
-                    if (value) {
-                        buffer += value;
-                        // Split by new line (\n) sent by Serial.println()
-                        let lines = buffer.split('\n');
-                        
-                        // Keep the incomplete last line in the buffer
-                        buffer = lines.pop(); 
-
-                        for (const line of lines) {
-                            parseData(line.trim());
-                        }
-                    }
+            while (true) {
+                const { value, done } = await reader.read();
+                if (done) break;
+                if (value) {
+                    buffer += value;
+                    let lines = buffer.split('\n');
+                    buffer = lines.pop(); 
+                    for (const line of lines) parseData(line.trim());
                 }
-            } catch (error) {
-                console.error("Read Error:", error);
-            } finally {
-                reader.releaseLock();
             }
         }
 
-        // --- PARSE DATA & UPDATE UI ---
-        function parseData(dataString) {
-            // Debug: Show raw data on screen so user knows it's working
-            document.getElementById('rawDataDisplay').textContent = "Raw Input: " + dataString;
+        // --- 2. SIMULATION MODE (GENERATES FAKE DATA) ---
+        function startSimulation() {
+            // Hide Auth Screen
+            document.getElementById('authContainer').classList.add('hidden');
+            document.getElementById('appContainer').classList.remove('hidden');
+            
+            // Show Simulation Indicator
+            document.getElementById('simStatus').classList.remove('hidden');
 
-            // Expected Format: "Data,SoilValue,Temperature"
+            // Run loop every 2 seconds
+            simulationInterval = setInterval(() => {
+                // Generate Random Temperature (20.0 to 35.0)
+                const randomTemp = (Math.random() * (35 - 20) + 20).toFixed(2);
+                
+                // Generate Random Soil (0 to 1023)
+                // We oscillate it to show different statuses
+                const randomSoil = Math.floor(Math.random() * 1023);
+
+                // Create the exact string string the Arduino WOULD send
+                // Format: "Data,SoilValue,Temperature"
+                const fakeDataString = `Data,${randomSoil},${randomTemp}`;
+                
+                // Feed it into the app
+                parseData(fakeDataString);
+
+            }, 2000); // Update every 2 seconds
+        }
+
+        // --- 3. PARSE DATA & UPDATE UI (Shared by both Real & Sim) ---
+        function parseData(dataString) {
+            document.getElementById('rawDataDisplay').textContent = "Input Feed: " + dataString;
+
             const parts = dataString.split(',');
 
             if (parts[0] === "Data" && parts.length >= 3) {
                 const rawSoil = parseInt(parts[1]);
                 const tempVal = parseFloat(parts[2]);
 
-                // Convert Raw Soil (0-1023) to Percentage (0-100%)
-                // 1023 is DRY, 0 is WET
+                // Convert Raw (0-1023) to Percentage (0-100%)
+                // 1023 = Dry (0%), 0 = Wet (100%)
                 let percentage = Math.round((1 - (rawSoil / 1023)) * 100);
                 if (percentage < 0) percentage = 0;
                 if (percentage > 100) percentage = 100;
 
-                // --- UPDATE DOM ELEMENTS ---
+                // Update Numbers
                 document.getElementById('soil').textContent = percentage + "%";
                 document.getElementById('temperature').textContent = tempVal + "°C";
                 
-                // Update Visual Bar
+                // Update Bar Width
                 const bar = document.getElementById('moistureBar');
                 bar.style.width = percentage + "%";
                 
-                // Update Color based on moisture
+                // Update Status & Colors based on logic
+                const statusText = document.getElementById('status');
+                const systemStatus = document.getElementById('systemStatus');
+                const pumpIcon = document.getElementById('pumpIcon');
+
                 if(percentage < 30) {
-                    bar.className = "h-full rounded-full bg-red-500 transition-all duration-500";
-                    document.getElementById('status').textContent = "CRITICAL: PUMP ON";
-                    document.getElementById('status').className = "text-red-400 font-bold";
+                    // DRY - PUMP ON
+                    bar.className = "h-full rounded-full bg-red-600 transition-all duration-500";
+                    
+                    statusText.textContent = "CRITICAL LOW - PUMP ON";
+                    statusText.className = "text-red-500 font-bold animate-pulse";
+                    
+                    systemStatus.textContent = "Watering Active";
+                    systemStatus.className = "text-xl font-bold text-red-500";
+                    
+                    pumpIcon.classList.add("text-red-500", "animate-spin");
+                    pumpIcon.classList.remove("text-green-500");
+
                 } else if (percentage < 60) {
+                    // MEDIUM - WARNING
                     bar.className = "h-full rounded-full bg-yellow-500 transition-all duration-500";
-                    document.getElementById('status').textContent = "Moisture OK";
-                    document.getElementById('status').className = "text-yellow-400 font-bold";
+                    
+                    statusText.textContent = "Moisture OK (Monitoring)";
+                    statusText.className = "text-yellow-400 font-bold";
+                    
+                    systemStatus.textContent = "System Idle";
+                    systemStatus.className = "text-xl font-bold text-yellow-400";
+
+                    pumpIcon.classList.remove("text-red-500", "animate-spin");
+                    pumpIcon.classList.add("text-yellow-500");
+
                 } else {
+                    // WET - HEALTHY
                     bar.className = "h-full rounded-full bg-green-500 transition-all duration-500";
-                    document.getElementById('status').textContent = "Fully Watered";
-                    document.getElementById('status').className = "text-green-400 font-bold";
+                    
+                    statusText.textContent = "Soil Healthy / Wet";
+                    statusText.className = "text-green-400 font-bold";
+                    
+                    systemStatus.textContent = "System Idle";
+                    systemStatus.className = "text-xl font-bold text-green-400";
+
+                    pumpIcon.classList.remove("text-red-500", "animate-spin", "text-yellow-500");
+                    pumpIcon.classList.add("text-green-500");
                 }
             }
         }
 
-        // --- PAGE LOAD EVENTS ---
         window.onload = function() {
             document.getElementById('connectBtn').addEventListener('click', connectToSerial);
-            
-            // Allow skipping login for hardware testing
-            document.getElementById('skipLoginBtn').addEventListener('click', () => {
-                document.getElementById('authContainer').classList.add('hidden');
-                document.getElementById('appContainer').classList.remove('hidden');
-            });
+            document.getElementById('startSimBtn').addEventListener('click', startSimulation);
         };
-        // -------------------------------
-// FAKE DATA GENERATOR (2 minutes)
-// -------------------------------
-
-// Run fake data ONLY when NOT connected to Arduino
-let fakeMode = true;
-
-// Generates fake values & sends them to UI using your parseArduinoData()
-function generateFakeData() {
-    if (!fakeMode) return;
-
-    const fakeSoilRaw = Math.floor(Math.random() * 1023);        // 0–1023
-    const fakeTemp = (Math.random() * (32 - 20) + 20).toFixed(2); // 20–32°C
-
-    const fakeString = `Data,${fakeSoilRaw},${fakeTemp}`;
-    console.log("FAKE:", fakeString);
-
-    parseArduinoData(fakeString);
-}
-
-// Start fake updates every 1 sec
-let fakeInterval = setInterval(generateFakeData, 1000);
-
-// Stop fake mode after 2 minutes
-setTimeout(() => {
-    fakeMode = false;
-    clearInterval(fakeInterval);
-    console.log("⛔ Fake data stopped after 2 minutes");
-}, 2 * 60 * 1000);
-
-
-// Disable fake mode when Arduino connects
-const originalConnectFunc = connectToSerial;
-connectToSerial = async function() {
-    fakeMode = false;
-    clearInterval(fakeInterval);
-    console.log("Real serial connected → Fake mode OFF");
-    return originalConnectFunc();
-};
     </script>
 
     <style>
         body { font-family: 'Inter', sans-serif; background-color: #0d111c; color: #e2e8f0; }
+        @keyframes pulse-red {
+            0%, 100% { opacity: 1; }
+            50% { opacity: .5; }
+        }
     </style>
 </head>
 <body class="min-h-screen p-4 sm:p-8 flex items-center justify-center">
 
-    <div id="authContainer" class="w-full max-w-sm bg-gray-900 rounded-2xl p-6 border border-gray-800 shadow-xl">
-        <h2 class="text-3xl font-bold text-center mb-6 text-white">Hydro-AI</h2>
-        <p class="text-gray-400 text-center mb-6">Smart Irrigation System</p>
+    <div id="authContainer" class="w-full max-w-sm bg-gray-900 rounded-2xl p-8 border border-gray-800 shadow-2xl relative overflow-hidden">
+        <div class="absolute top-0 left-0 w-full h-2 bg-green-500"></div>
+        <h2 class="text-3xl font-bold text-center mb-2 text-white">Hydro-AI</h2>
+        <p class="text-gray-400 text-center mb-8">Smart Irrigation Dashboard</p>
         
-        <button id="skipLoginBtn" class="w-full bg-green-600 hover:bg-green-700 text-white font-bold py-3 rounded-lg transition-colors flex items-center justify-center gap-2">
-            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
-            Test Hardware (Skip Login)
+        <button id="startSimBtn" class="w-full bg-purple-600 hover:bg-purple-700 text-white font-bold py-4 rounded-xl transition-all transform hover:scale-105 mb-4 flex items-center justify-center gap-2 shadow-lg group">
+            <svg class="w-6 h-6 group-hover:animate-spin" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg>
+            Start Simulation Mode
         </button>
-        <p class="text-xs text-gray-500 text-center mt-4">Click above to access the dashboard immediately.</p>
+        <p class="text-xs text-gray-500 text-center">Generates random data to test the UI</p>
     </div>
 
-    <div id="appContainer" class="hidden w-full max-w-4xl bg-gray-900 rounded-2xl p-6 shadow-2xl border border-gray-800">
+    <div id="appContainer" class="hidden w-full max-w-4xl bg-gray-900 rounded-2xl p-6 shadow-2xl border border-gray-800 relative">
         
+        <div id="simStatus" class="hidden absolute top-4 right-4 bg-purple-900 text-purple-200 text-xs font-bold px-3 py-1 rounded-full border border-purple-500 animate-pulse">
+            SIMULATION MODE ACTIVE
+        </div>
+
         <header class="flex flex-col sm:flex-row items-center justify-between mb-8 pb-6 border-b border-gray-800">
             <div class="flex items-center gap-4 mb-4 sm:mb-0">
-                <div class="p-2 bg-green-500 rounded-lg shadow-lg">
+                <div class="p-3 bg-green-500 rounded-xl shadow-lg">
                     <svg class="w-8 h-8 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 3v18M12 3c-1.105 0-2 .895-2 2s.895 2 2 2h0c1.105 0 2-.895 2-2s-.895-2-2-2zM4 14h16m-8 0a4 4 0 100-8 4 4 0 000 8z"></path></svg>
                 </div>
-                <h1 class="text-3xl font-bold text-gray-100">Hydro-AI Monitor</h1>
+                <div>
+                    <h1 class="text-3xl font-bold text-gray-100">Hydro-AI Monitor</h1>
+                    <p class="text-gray-500 text-sm">Zone 1: Greenhouse</p>
+                </div>
             </div>
             
-            <button id="connectBtn" class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-6 rounded-lg flex items-center gap-2 shadow-lg transition-all transform hover:scale-105">
-                <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg>
-                Connect Arduino
+            <button id="connectBtn" class="bg-gray-700 hover:bg-gray-600 text-gray-300 font-bold py-2 px-4 rounded-lg flex items-center gap-2 transition-colors">
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg>
+                Connect Real Hardware
             </button>
         </header>
 
-        <div class="mb-6 p-2 bg-black rounded text-xs text-green-400 font-mono" id="rawDataDisplay">
-            Waiting for connection... (Click Blue Button)
+        <div class="mb-6 p-2 bg-black rounded text-xs text-green-400 font-mono opacity-70" id="rawDataDisplay">
+            System Ready. Waiting for data...
         </div>
 
-        <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
             
-            <div class="bg-gray-800 p-8 rounded-2xl border border-gray-700 relative overflow-hidden">
+            <div class="md:col-span-3 bg-gray-800 p-6 rounded-xl border border-gray-700 flex items-center justify-between">
+                <div>
+                    <h3 class="text-gray-400 text-sm font-bold uppercase tracking-wider mb-1">System Status</h3>
+                    <div id="systemStatus" class="text-xl font-bold text-gray-100">Initializing...</div>
+                </div>
+                <div id="pumpIcon" class="text-gray-600">
+                    <svg class="w-12 h-12" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path></svg>
+                </div>
+            </div>
+
+            <div class="bg-gray-800 p-8 rounded-2xl border border-gray-700 relative overflow-hidden md:col-span-2">
                 <div class="absolute top-0 right-0 p-4 opacity-10">
                     <svg class="w-32 h-32 text-white" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M3.172 5.172a4 4 0 015.656 0L10 6.343l1.172-1.171a4 4 0 115.656 5.656L10 17.657l-6.828-6.829a4 4 0 010-5.656z" clip-rule="evenodd"></path></svg>
                 </div>
@@ -212,25 +227,21 @@ connectToSerial = async function() {
                     <span id="soil" class="text-6xl font-extrabold text-white">--%</span>
                 </div>
                 
-                <div class="w-full bg-gray-700 h-4 rounded-full mt-6 overflow-hidden">
-                    <div id="moistureBar" class="h-full bg-green-500 rounded-full" style="width: 0%;"></div>
+                <div class="w-full bg-gray-700 h-6 rounded-full mt-6 overflow-hidden border border-gray-600">
+                    <div id="moistureBar" class="h-full bg-green-500" style="width: 0%;"></div>
                 </div>
-                <p class="mt-4 text-sm">Status: <span id="status" class="text-gray-400">Unknown</span></p>
+                <p class="mt-4 text-lg">Action: <span id="status" class="text-gray-400">Waiting...</span></p>
             </div>
 
             <div class="bg-gray-800 p-8 rounded-2xl border border-gray-700 relative overflow-hidden">
-                 <div class="absolute top-0 right-0 p-4 opacity-10">
-                    <svg class="w-32 h-32 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364-6.364l-.707-.707M6.343 17.657l-.707.707M16.364 6.364l.707-.707M6.343 6.343l.707-.707M12 8a4 4 0 100 8 4 4 0 000-8z"></path></svg>
-                </div>
                 <h3 class="text-gray-400 text-sm font-bold uppercase tracking-wider mb-2">Temperature</h3>
                 <div class="flex items-end gap-2">
-                    <span id="temperature" class="text-6xl font-extrabold text-white">--°C</span>
+                    <span id="temperature" class="text-5xl font-extrabold text-white">--°C</span>
                 </div>
-                <p class="mt-6 text-sm text-gray-500">Live reading from DHT Sensor</p>
+                <p class="mt-6 text-sm text-gray-500">Sensor: DHT22 (Simulated)</p>
             </div>
 
         </div>
     </div>
 </body>
 </html>
-
