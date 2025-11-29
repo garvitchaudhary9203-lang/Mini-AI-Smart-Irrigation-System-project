@@ -3,68 +3,60 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Hydro-AI:SIS - Simulation</title>
+    <title>Hydro-AI:SIS</title>
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M12 3v18M12 3c-1.105 0-2 .895-2 2s.895 2 2 2h0c1.105 0 2-.895 2-2s-.895-2-2-2zM4 14h16m-8 0a4 4 0 100-8 4 4 0 000 8z'/%3E%3C/svg%3E" type="image/svg+xml">
     <script src="https://cdn.tailwindcss.com"></script>
     
     <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.2.0/dist/tf.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
 
     <script type="module">
-        // MOCK/SIMULATION OVERRIDES
-        // All Firebase interactions are mocked to enable instant local running.
-        
-        // Mock imports to prevent errors
-        const initializeApp = () => ({}); 
-        const getAuth = () => ({});
-        const onAuthStateChanged = (auth, callback) => callback({ uid: 'simulated-user-id' });
-        const getFirestore = () => ({});
-        const doc = () => ({});
-        const getDoc = async () => ({ exists: () => true, data: () => ({ pumpStatus: "off", aiMode: true }) });
-        const setDoc = async () => console.log("MOCK: Data saved to Firestore.");
-        const onSnapshot = (q, callback) => { /* Mock for Firestore is handled in simulation */ };
-        const collection = () => ({});
-        const query = () => ({});
-        const serverTimestamp = () => new Date().toISOString(); 
-        const getDatabase = () => ({});
-        const ref = () => ({});
-        const onValue = (ref, callback) => { /* Mock for RTDB is handled in simulation */ };
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInWithCustomToken, signInAnonymously, onAuthStateChanged, signOut, signInWithEmailAndPassword, createUserWithEmailAndPassword, sendPasswordResetEmail, GoogleAuthProvider, signInWithPopup } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, doc, getDoc, setDoc, onSnapshot, collection, query, addDoc, serverTimestamp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        import { setLogLevel } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        // --- Realtime Database Imports for ESP32 Data ---
+        import { getDatabase, ref, onValue } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-database.js";
+        // -----------------------------------------------------
 
-        const appId = 'default-app-id';
-        const firebaseConfig = {}; // Ignored for simulation
-        const initialAuthToken = null;
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+        const firebaseConfig = {
+            apiKey: "AIzaSyCvKwpHAvcu9QSJDjqf_zdiTSGDpdNrJbw",
+            authDomain: "mini-ai-irrigation-system.firebaseapp.com",
+            projectId: "mini-ai-irrigation-system",
+            storageBucket: "mini-ai-irrigation-system.firebasestorage.app",
+            messagingSenderId: "205361105789",
+            appId: "1:205361105789:web:4c75a11eab0f8263265a14",
+            measurementId: "G-KM4XGDFSDR",
+            databaseURL: "https://mini-ai-irrigation-system-default-rtdb.firebaseio.com/", 
+        };
+        // NOTE: The external AI Assistant chat is disabled due to API key security issues.
+        const apiKey = ""; // API key removed for security on public GitHub pages.
+        const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-05-20:generateContent?key=${apiKey}`;
+        const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? initialAuthToken : null;
         
         let db;
         let rtdb; 
         let auth;
-        let userId = 'simulated-user-id'; // Pre-set userId for instant start
-        
+        let userId;
         let sensorData = {
-            'zone1': { moisture: 75, temperature: 25, humidity: 60, crop: 'Lavender' },
-            'zone2': { moisture: 40, temperature: 28, humidity: 55, crop: 'Zoysia Grass' },
-            'zone3': { moisture: 22, temperature: 30, humidity: 50, crop: 'Tomatoes' },
-            'zone4': { moisture: 68, temperature: 23, humidity: 65, crop: 'Apple Trees' }
+            'zone1': { moisture: 0, temperature: 0, humidity: 0, crop: 'Lavender' },
+            'zone2': { moisture: 0, temperature: 0, humidity: 0, crop: 'Zoysia Grass' },
+            'zone3': { moisture: 0, temperature: 0, humidity: 0, crop: 'Tomatoes' },
+            'zone4': { moisture: 0, temperature: 0, humidity: 0, crop: 'Apple Trees' }
         };
         let currentWeatherData = { temperature: 25, humidity: 65, condition: "Partly Cloudy" };
         let isPumpOn = false;
         let activeZone = 'zone1';
 
-        let moistureHistory = {
-            'zone1': Array(14).fill(75),
-            'zone2': Array(14).fill(40),
-            'zone3': Array(14).fill(22),
-            'zone4': Array(14).fill(68)
-        };
-        let moistureChart = null;
-        let rtdbMoistureRaw = 2000;
-        let rtdbTemp = 25;
-        let rtdbHumidity = 50;
-
-        // --- TensorFlow.js Model Integration Variables ---
-        let tfjsModel = true; // Mock as loaded for simulation
+        // --- NEW: TensorFlow.js Model Integration Variables ---
+        let tfjsModel;
+        // 👇👇👇 YOUR SCALER PARAMETERS PASTE HERE 👇👇👇
         const SCALER_MEAN = [45.4859625, 22.5528125, 44.98325]; 
-        const SCALER_STD = [26.002991230790848, 13.259638412861953, 14.716702057102202]; 
-        
+        const SCALER_STD = [26.002991230790848, 13.259638412861953, 14.716702057102202];   
+        // 👆👆👆 THIS IS CRUCIAL FOR MODEL ACCURACY 👆👆👆
+
+        setLogLevel('debug');
+
         const crops = {
             'Lavender': {
                 photo: 'https://placehold.co/200x200/4c3b53/f3e8ff?text=Lavender',
@@ -84,63 +76,196 @@
             }
         };
 
+        // --- NEW FUNCTION: AI Model Prediction ---
         async function aiPredict(moisture, temperature, humidity) {
-            if (!tfjsModel) return 0;
-            if (moisture < 35 && temperature > 25) return 1;
-            if (moisture > 75) return 0; 
-            return Math.random() > 0.5 ? 1 : 0;
+            if (!tfjsModel) {
+                console.error("AI Model not loaded yet. Skipping prediction.");
+                return 0; 
+            }
+
+            // 1. Prepare input as a tensor (2D array: [[moisture, temperature, humidity]])
+            const inputData = [moisture, temperature, humidity];
+            const inputTensor = tf.tensor2d([inputData]);
+
+            // 2. Normalize the data using the saved scaler parameters (StandardScaler: (X - mu) / sigma)
+            const meanTensor = tf.tensor1d(SCALER_MEAN);
+            const stdTensor = tf.tensor1d(SCALER_STD);
+            
+            const scaledInput = inputTensor.sub(meanTensor).div(stdTensor);
+
+            // 3. Make prediction
+            const prediction = tfjsModel.predict(scaledInput);
+
+            // 4. Get the output value
+            const predictionValue = (await prediction.data())[0];
+
+            // Clean up tensors to save memory
+            inputTensor.dispose();
+            meanTensor.dispose();
+            stdTensor.dispose();
+            prediction.dispose();
+            scaledInput.dispose();
+            
+            // Return 1 for PUMP ON (>0.5) and 0 for PUMP OFF (<=0.5)
+            return predictionValue > 0.5 ? 1 : 0;
         }
 
+        // --- NEW FUNCTION: Model Loading ---
         async function loadModel() {
-            console.log("MOCK: TensorFlow.js Model is considered loaded for simulation.");
-            showMessage("AI Model Loaded (Simulation Mode).", "success");
+            try {
+                // Loading the model from the subfolder you uploaded to GitHub
+                tfjsModel = await tf.loadLayersModel('./tfjs_model_web/model.json');
+                console.log("TensorFlow.js Model loaded successfully!");
+                showMessage("AI Model Loaded.", "success");
+            } catch (e) {
+                console.error("Failed to load TensorFlow.js model:", e);
+                showMessage("Error loading AI model. Check 'tfjs_model_web' folder path and content on GitHub.", "error");
+            }
         }
 
-        function updateRtdbDisplay(moistureRaw, tempRaw, humidityRaw, pumpStatus) {
-            const percentage = moistureRaw !== null ? Math.round((1 - (moistureRaw / 4095)) * 100) : '--'; 
-            document.getElementById("soil").textContent = percentage > 100 ? "100%" : `${percentage}%`;
-            document.getElementById("temperature").textContent = tempRaw !== null ? `${tempRaw}°C` : '--';
-            document.getElementById("humidity").textContent = humidityRaw !== null ? `${humidityRaw}%` : '--';
-            document.getElementById("status").textContent = pumpStatus || 'N/A';
-        }
-
-        // --- MODIFIED FUNCTION: initFirebase for instant start ---
         async function initFirebase() {
             try {
-                // Instantly show the app as there is no login
-                const formattedUid = `${userId.substring(0, 4)}-${Math.floor(Math.random() * 9000) + 1000}-!@#*`;
-                document.getElementById('userIdDisplay').textContent = `User: ${formattedUid}`;
-                document.getElementById('appContainer').classList.remove('hidden');
+                const app = initializeApp(firebaseConfig);
+                db = getFirestore(app);
+                rtdb = getDatabase(app); // Initialize Realtime Database
+                auth = getAuth(app);
 
-                await loadModel(); 
-                // setupRealtimeListeners(); // Mocked out
-                // setupRtdbListener();     // Mocked out
-                startSimulation(); 
-                updateAiMode(true);
+                onAuthStateChanged(auth, async (user) => {
+                    if (user) {
+                        userId = user.uid;
+                        const formattedUid = `${userId.substring(0, 4)}-${Math.floor(Math.random() * 9000) + 1000}-!@#*`;
+                        document.getElementById('userIdDisplay').textContent = `User: ${formattedUid}`;
+                        document.getElementById('authContainer').classList.add('hidden');
+                        document.getElementById('appContainer').classList.remove('hidden');
+
+                        const userDocRef = doc(db, `/artifacts/${appId}/users/${userId}/data/settings`);
+                        const userDocSnap = await getDoc(userDocRef);
+                        if (!userDocSnap.exists()) {
+                            await setDoc(userDocRef, {
+                                pumpStatus: "off",
+                                aiMode: true,
+                                lastManualOverride: null,
+                            });
+                        }
+                        
+                        await loadModel(); // <-- CALL THE NEW MODEL LOADING FUNCTION HERE
+                        
+                        setupRealtimeListeners(); // Firestore listener
+                        setupRtdbListener();     // Realtime Database listener (for ESP32 data)
+                        startSimulation();       // Starts simulated data updates
+                    } else {
+                        document.getElementById('appContainer').classList.add('hidden');
+                        document.getElementById('authContainer').classList.remove('hidden');
+                        updateAuthView('login');
+                        if (!initialAuthToken) {
+                            signInAnonymously(auth);
+                        }
+                    }
+                });
+
+                if (initialAuthToken) {
+                    await signInWithCustomToken(auth, initialAuthToken);
+                } else {
+                    // This will be handled by onAuthStateChanged
+                }
+
             } catch (error) {
-                console.error("Error initializing Simulation:", error);
-                document.getElementById('statusMessage').textContent = "Error: Could not start simulation.";
+                console.error("Error initializing Firebase:", error);
+                document.getElementById('statusMessage').textContent = "Error: Could not connect to database. See console for details.";
             }
         }
         
+        // Function to listen to the ESP32 data from Realtime Database
         async function setupRtdbListener() {
-            console.log("MOCK: Realtime Database Listener bypassed.");
+            if (!rtdb) return;
+
+            // Soil Moisture
+            onValue(ref(rtdb, "sensor/soil"), (snap) => {
+                const rawValue = snap.val();
+                // Assuming ESP32 sensor reads 0 (wet) to 4095 (dry), convert to 0-100% moisture
+                const percentage = rawValue !== null ? Math.round((1 - (rawValue / 4095)) * 100) : '--'; 
+                document.getElementById("soil").textContent = percentage > 100 ? "100%" : `${percentage}%`;
+            });
+
+            // Temperature
+            onValue(ref(rtdb, "sensor/temp"), (snap) => {
+                document.getElementById("temperature").textContent = snap.val() !== null ? `${snap.val()}°C` : '--';
+            });
+
+            // Humidity
+            onValue(ref(rtdb, "sensor/humidity"), (snap) => {
+                document.getElementById("humidity").textContent = snap.val() !== null ? `${snap.val()}%` : '--';
+            });
+
+            // Pump Status
+            onValue(ref(rtdb, "sensor/status"), (snap) => {
+                document.getElementById("status").textContent = snap.val() || 'N/A';
+            });
         }
 
         async function setupRealtimeListeners() {
-            console.log("MOCK: Firestore Realtime Listener bypassed.");
+            const settingsDocRef = doc(db, `/artifacts/${appId}/users/${userId}/data/settings`);
+            onSnapshot(settingsDocRef, (docSnap) => {
+                if (docSnap.exists()) {
+                    const data = docSnap.data();
+                    updatePumpStatus(data.pumpStatus === "on");
+                    updateAiMode(data.aiMode);
+                }
+            }, (error) => {
+                console.error("Error listening to settings:", error);
+            });
+
+            const sensorCollectionRef = collection(db, `/artifacts/${appId}/users/${userId}/data/sensors`);
+            const q = query(sensorCollectionRef);
+            onSnapshot(q, (snapshot) => {
+                snapshot.docChanges().forEach((change) => {
+                    if (change.type === "added" || change.type === "modified") {
+                        const sensorDataUpdate = change.doc.data();
+                        const zoneId = change.doc.id;
+                        
+                        if (sensorDataUpdate.moisture !== undefined) {
+                            sensorDataUpdate.moisture = sensorDataUpdate.moisture > 100 ? 100 : sensorDataUpdate.moisture;
+                            sensorDataUpdate.moisture = sensorDataUpdate.moisture < 0 ? 0 : sensorDataUpdate.moisture;
+                        }
+                        
+                        sensorData[zoneId] = { ...sensorData[zoneId], ...sensorDataUpdate };
+                        updateSensorReadings(zoneId, sensorData[zoneId]);
+                        
+                        simulateAiLogic();  // Trigger AI logic on sensor update
+                        updateDiagnostics();
+                    }
+                });
+            }, (error) => {
+                console.error("Error listening to sensors:", error);
+            });
         }
 
         async function savePumpStatus(status){
-            isPumpOn = (status === "on");
-            updatePumpStatus(isPumpOn);
+            if (!db || !userId) {
+                console.error("Database not initialized or user not logged in.");
+                return;
+            }
+            const settingsDocRef = doc(db, `/artifacts/${appId}/users/${userId}/data/settings`);
+            try {
+                isPumpOn = (status === "on");
+                await setDoc(settingsDocRef, { pumpStatus: status, lastManualOverride: serverTimestamp() }, { merge: true });
+            } catch (e) {
+                console.error("Error updating pump status:", e);
+            }
         }
 
         async function saveAiMode(mode) {
-            updateAiMode(mode);
-            showMessage(`AI Mode ${mode ? 'Enabled' : 'Disabled'} (SIMULATION).`, "success");
+            if (!db || !userId) return console.error("Database not initialized or user not logged in.");
+            const settingsDocRef = doc(db, `/artifacts/${appId}/users/${userId}/data/settings`);
+            try {
+                await setDoc(settingsDocRef, { aiMode: mode }, { merge: true });
+                showMessage(`AI Mode ${mode ? 'Enabled' : 'Disabled'}.`, "success");
+            } catch (e) {
+                console.error("Error updating AI mode:", e);
+                showMessage("Failed to update AI mode.", "error");
+            }
         }
-
+        
         function updatePumpStatus(isOn) {
             isPumpOn = isOn;
             const pumpStatusText = document.getElementById('pumpStatusText');
@@ -182,16 +307,12 @@
         function updateSensorReadings(zoneId, data) {
             sensorData[zoneId] = data;
 
-            const moisture = data.moisture !== undefined ? Math.round(data.moisture) : 0;
-            moistureHistory[zoneId].push(moisture);
-            if (moistureHistory[zoneId].length > 14) {
-                moistureHistory[zoneId].shift(); 
-            }
-
             const moistureCard = document.getElementById(`${zoneId}-moisture-card`);
             if (moistureCard) {
                 const moistureValue = moistureCard.querySelector('.moisture-value');
                 const moistureBar = moistureCard.querySelector('.moisture-bar');
+                
+                const moisture = data.moisture !== undefined ? Math.round(data.moisture) : 0;
                 
                 moistureValue.textContent = `${moisture}%`;
                 moistureBar.style.width = `${moisture}%`;
@@ -209,130 +330,15 @@
             }
 
             if (zoneId === activeZone) {
+                const moisture = data.moisture !== undefined ? Math.round(data.moisture) : 0;
                 document.getElementById('moistureValue').textContent = `${moisture}%`;
                 document.getElementById('moistureBar').style.width = `${moisture}%`;
                 document.getElementById('moistureBar').className = `h-full rounded-full ${moisture > 60 ? 'bg-green-500' : moisture > 30 ? 'bg-yellow-500' : 'bg-red-500'}`;
                 document.getElementById('tempValue').textContent = `${data.temperature !== undefined ? Math.round(data.temperature) : '--'}°C`;
                 document.getElementById('humidityValue').textContent = `${data.humidity !== undefined ? Math.round(data.humidity) : '--'}%`;
-                
-                updateMoistureChart(activeZone);
             }
         }
 
-        function updateMoistureChart(zoneId) {
-            const chartData = moistureHistory[zoneId];
-            const ctx = document.getElementById('moistureChart');
-
-            if (!ctx) return;
-            
-            if (!moistureChart) {
-                ctx.parentElement.innerHTML = '<canvas id="moistureChart" class="w-full h-48 bg-gray-700 rounded-lg"></canvas>';
-                const newCtx = document.getElementById('moistureChart');
-                
-                moistureChart = new Chart(newCtx, {
-                    type: 'line',
-                    data: {
-                        labels: Array(14).fill('').map((_, i) => (i + 1) * 5 + 's ago'),
-                        datasets: [{
-                            label: 'Soil Moisture (%)',
-                            data: chartData,
-                            borderColor: '#10b981', 
-                            borderWidth: 2,
-                            tension: 0.4,
-                            pointRadius: 3,
-                            fill: true,
-                            backgroundColor: 'rgba(16, 185, 129, 0.1)',
-                        }]
-                    },
-                    options: {
-                        responsive: true,
-                        maintainAspectRatio: false,
-                        scales: {
-                            y: {
-                                min: 0,
-                                max: 100,
-                                ticks: { color: '#9ca3af' },
-                                grid: { color: '#374151' }
-                            },
-                            x: {
-                                ticks: { color: '#9ca3af' },
-                                grid: { display: false }
-                            }
-                        },
-                        plugins: {
-                            legend: { display: false },
-                            title: { display: false }
-                        }
-                    }
-                });
-            } else {
-                moistureChart.data.datasets[0].data = chartData;
-                moistureChart.data.labels = Array(chartData.length).fill('').map((_, i) => (chartData.length - i) * 5 + 's ago').reverse();
-                moistureChart.update('none'); 
-            }
-        }
-
-        let sensorInterval;
-        function startSimulation() {
-            setInterval(updateWeatherData, 30000);
-            updateWeatherData(); 
-
-            sensorInterval = setInterval(async () => {
-                // 1. Simulate RTDB Live Feed (ESP32 Raw Data)
-                rtdbMoistureRaw += Math.floor(Math.random() * 200) - 100;
-                if (isPumpOn) { rtdbMoistureRaw -= 50; } 
-                rtdbMoistureRaw = Math.min(4095, Math.max(0, rtdbMoistureRaw));
-                
-                rtdbTemp += Math.random() * 0.5 - 0.25;
-                rtdbHumidity += Math.random() * 1 - 0.5;
-                rtdbTemp = Math.round(Math.min(40, Math.max(15, rtdbTemp)));
-                rtdbHumidity = Math.round(Math.min(90, Math.max(20, rtdbHumidity)));
-                
-                updateRtdbDisplay(rtdbMoistureRaw, rtdbTemp, rtdbHumidity, isPumpOn ? 'ON' : 'OFF');
-
-                // 2. Simulate Firestore Sensor Data (Processed Data for each Zone)
-                for (const zone in sensorData) {
-                    let currentData = sensorData[zone];
-                    let moisture = currentData.moisture;
-                    let temperature = currentData.temperature;
-                    let humidity = currentData.humidity;
-
-                    moisture += (Math.random() * 5) - 2.5;
-                    
-                    if (isPumpOn) {
-                        moisture += 3; 
-                    } 
-                    
-                    if (currentWeatherData.condition === "Sunny" && moisture > 20) moisture -= 0.5;
-                    if (currentWeatherData.condition === "Rain Expected" && moisture < 80) moisture += 2;
-                    
-                    moisture = Math.min(100, Math.max(5, moisture));
-                    
-                    temperature += Math.random() * 0.3 - 0.15;
-                    humidity += Math.random() * 0.5 - 0.25;
-                    temperature = Math.round(temperature * 10) / 10;
-                    humidity = Math.round(humidity * 10) / 10;
-
-                    const sensorDataPoint = {
-                        moisture: moisture,
-                        temperature: temperature,
-                        humidity: humidity,
-                        crop: currentData.crop,
-                        timestamp: serverTimestamp()
-                    };
-                    
-                    sensorData[zone] = sensorDataPoint;
-
-                    updateSensorReadings(zone, sensorDataPoint);
-                }
-
-                // 3. Run AI Logic
-                simulateAiLogic();
-                updateDiagnostics();
-                
-            }, 5000); 
-        }
-        
         function updateWeatherData() {
             const conditions = ["Sunny", "Partly Cloudy", "Rain Expected", "Overcast"];
             const randomCondition = conditions[Math.floor(Math.random() * conditions.length)];
@@ -348,6 +354,7 @@
             document.getElementById('currentHumidity').textContent = `${currentWeatherData.humidity}% Humidity`;
         }
         
+        // Simulates an AI model that updates the crops based on zone ID
         function updateCropsAndCropsInfo() {
             const cropsContainer = document.getElementById('cropsContainer');
             cropsContainer.innerHTML = '';
@@ -385,13 +392,16 @@
             }
         }
 
+        // --- MODIFIED FUNCTION: Uses the TensorFlow.js Model ---
         async function simulateAiLogic() {
-            const settingsSnap = { data: () => ({ aiMode: document.getElementById('aiModeToggle').checked }) }; 
-            const aiModeToggle = settingsSnap.data().aiMode;
+            const settingsDocRef = doc(db, `/artifacts/${appId}/users/${userId}/data/settings`);
+            const settingsSnap = await getDoc(settingsDocRef);
+            const aiModeToggle = settingsSnap.data().aiMode; 
             
             if (!aiModeToggle) return;
             
             const recommendation = document.getElementById('aiRecommendationMessage');
+            // We'll base the prediction on the actively displayed zone, or fall back to zone 1
             const predictionZone = sensorData[activeZone] || sensorData['zone1']; 
             
             if (!predictionZone || predictionZone.moisture === undefined) {
@@ -403,10 +413,12 @@
             const temperature = predictionZone.temperature;
             const humidity = predictionZone.humidity;
             
-            const predictionStatus = await aiPredict(moisture, temperature, humidity); 
+            // 1. Get Prediction from the TensorFlow.js model
+            const predictionStatus = await aiPredict(moisture, temperature, humidity); // 1 for ON, 0 for OFF
             const pumpAction = predictionStatus === 1 ? "on" : "off";
             const zoneName = predictionZone.crop;
             
+            // 2. Determine AI Message and action
             let message = "";
             let action = false;
 
@@ -437,22 +449,22 @@
             for (const zone in sensorData) {
                 const data = sensorData[zone];
                  if (data.moisture !== undefined) {
-                     if (data.moisture < 20) {
-                         diagnostics.push({
-                             type: 'Problem',
-                             zone: data.crop,
-                             message: `Extreme low soil moisture detected (${Math.round(data.moisture)}%). Check the sensor and pump for Zone ${zone.replace('zone', '')}.`,
-                             color: 'bg-red-500'
-                         });
-                     } else if (data.moisture > 80) {
-                         diagnostics.push({
-                             type: 'Problem',
-                             zone: data.crop,
-                             message: `High moisture detected (${Math.round(data.moisture)}%). Check for stuck pump or excessive rain for Zone ${zone.replace('zone', '')}.`,
-                             color: 'bg-red-500'
-                         });
-                     }
-                 }
+                    if (data.moisture < 20) {
+                        diagnostics.push({
+                            type: 'Problem',
+                            zone: data.crop,
+                            message: `Extreme low soil moisture detected (${Math.round(data.moisture)}%). Check the sensor and pump for Zone ${zone.replace('zone', '')}.`,
+                            color: 'bg-red-500'
+                        });
+                    } else if (data.moisture > 80) {
+                        diagnostics.push({
+                            type: 'Problem',
+                            zone: data.crop,
+                            message: `High moisture detected (${Math.round(data.moisture)}%). Check for stuck pump or excessive rain for Zone ${zone.replace('zone', '')}.`,
+                            color: 'bg-red-500'
+                        });
+                    }
+                }
             }
 
             if (diagnostics.length === 0) {
@@ -481,6 +493,9 @@
             messagesContainer.scrollTop = messagesContainer.scrollHeight;  
         }
 
+        // -----------------------------------------------------------
+        // REPLACED FUNCTION: Mock Tool Router (No Gemini API key needed)
+        // -----------------------------------------------------------
         async function generateAiResponse(userInput) {
             const thinkingMessage = "Hydro-AI is thinking...";
             addMessage(thinkingMessage, false);
@@ -490,24 +505,32 @@
             const messagesContainer = document.getElementById('chatMessages');
             messagesContainer.removeChild(messagesContainer.lastChild);
 
+            // --- 1. Tool Routing Logic ---
+
+            // A. Check for Pump Commands
             if (normalizedInput.includes("turn pump on") || normalizedInput.includes("start pump")) {
                 await savePumpStatus("on");
-                addMessage(`System Command: The water pump has been turned ON. (SIMULATION)`, false);
+                addMessage(`System Command: The water pump has been turned ON.`, false);
             } 
             else if (normalizedInput.includes("turn pump off") || normalizedInput.includes("stop pump")) {
                 await savePumpStatus("off");
-                addMessage(`System Command: The water pump has been turned OFF. (SIMULATION)`, false);
+                addMessage(`System Command: The water pump has been turned OFF.`, false);
             } 
             
+            // B. Check for Status/Diagnostics
             else if (normalizedInput.includes("status") || normalizedInput.includes("readings")) {
+                
+                // 1. Check for a specific zone number (using Regex to find "zone X" or just "X")
                 const zoneMatch = normalizedInput.match(/(zone\s*|patch\s*|zone |)(\d)/);
-                let zoneIdToReport = activeZone; 
+                let zoneIdToReport = activeZone; // Default to the currently active zone view
 
                 if (zoneMatch && zoneMatch[2]) {
+                    // Convert found digit to zoneId format
                     zoneIdToReport = 'zone' + zoneMatch[2];
                 } else if (normalizedInput.includes("all")) {
+                     // Handle "status of all zones" 
                      addMessage(`Showing general status. Please visit the Diagnostics tab for full details.
-- All Zones are monitored by your simulation model.
+- All Zones are monitored by your TensorFlow.js model.
 - Pump Status is currently **${isPumpOn ? 'ON' : 'OFF'}**.`, false);
                      return;
                 }
@@ -515,19 +538,22 @@
                 const data = sensorData[zoneIdToReport];
                 
                 if (data && data.moisture !== undefined) {
-                    addMessage(`Current status for the **${data.crop} (${zoneIdToReport.toUpperCase()})** zone:
+                     addMessage(`Current status for the **${data.crop} (${zoneIdToReport.toUpperCase()})** zone:
 - Soil Moisture: ${Math.round(data.moisture)}%
 - Temperature: ${Math.round(data.temperature)}°C
 - Humidity: ${Math.round(data.humidity)}%`, false);
                 } else {
-                    addMessage(`I could not retrieve data for **${zoneIdToReport}**. Please ensure that zone is active and data is available.`, false);
+                     addMessage(`I could not retrieve data for **${zoneIdToReport}**. Please ensure that zone is active and data is available.`, false);
                 }
             } 
             
+            // C. Fallback for Unrecognized/General Input
             else {
                 addMessage(`I am Hydro-AI, the smart irrigation assistant. I can only respond to direct commands about the pump, like "turn pump on," "stop pump," or specific status queries like "status of zone 3."`, false);
             }
         }
+        // -----------------------------------------------------------
+
 
         function handleChatInput() {
             const chatInput = document.getElementById('chatInput');
@@ -541,6 +567,57 @@
         
         function handleVoiceInput() {
             addMessage("Voice input is currently not active in this simulation, but it would work using the browser's SpeechRecognition API. What would you like to ask?", false);
+        }
+
+        let sensorInterval;
+        function startSimulation() {
+            if (!db) return;
+            setInterval(updateWeatherData, 30000);
+            updateWeatherData(); 
+
+            sensorInterval = setInterval(async () => {
+                for (const zone in sensorData) {
+                    const moisture = Math.random() * 80 + 10; 
+                    const temperature = Math.random() * 20 + 15;
+                    const humidity = Math.random() * 50 + 40;
+                    const sensorDataPoint = {
+                        moisture,
+                        temperature,
+                        humidity,
+                        timestamp: serverTimestamp()
+                    };
+                    try {
+                        await setDoc(doc(db, `/artifacts/${appId}/users/${userId}/data/sensors/${zone}`), sensorDataPoint);
+                    } catch (e) {
+                        console.error("Error adding document: ", e);
+                    }
+                }
+            }, 5000); 
+        }
+        
+        function getDiagnosticsSummary() {
+            let problemZones = [];
+            for (const zone in sensorData) {
+                const data = sensorData[zone];
+                if (data.moisture !== undefined && (data.moisture < 20 || data.moisture > 80)) {
+                    problemZones.push(data.crop);
+                }
+            }
+
+            if (problemZones.length > 0) {
+                return `There are some issues detected. Low or high moisture levels were found in the following zones: ${problemZones.join(', ')}. Please check the Diagnostics tab for more details.`;
+            } else {
+                return "All systems are running normally. No issues have been detected.";
+            }
+        }
+
+        function getCropInformation(cropName) {
+            const crop = crops[cropName];
+            if (crop) {
+                return `Here is some information about ${cropName}: ${crop.description}`;
+            } else {
+                return `I'm sorry, I don't have information on a crop named ${cropName}. The available crops are Lavender, Zoysia Grass, Tomatoes, and Apple Trees.`;
+            }
         }
 
         function showMessage(msg, type = "info") {
@@ -579,17 +656,82 @@
                 document.getElementById('moistureBar').className = `h-full rounded-full ${moisture > 60 ? 'bg-green-500' : moisture > 30 ? 'bg-yellow-500' : 'bg-red-500'}`;
                 document.getElementById('tempValue').textContent = `${data.temperature !== undefined ? Math.round(data.temperature) : '--'}°C`;
                 document.getElementById('humidityValue').textContent = `${data.humidity !== undefined ? Math.round(data.humidity) : '--'}%`;
-                
-                updateMoistureChart(activeZone);
             }
         }
 
-        // --- AUTH FUNCTIONS REMOVED. Only the Sign Out button handler is modified below. ---
+        // --- Authentication Functions ---
+        function updateAuthView(viewName) {
+            document.querySelectorAll('.auth-view').forEach(el => el.classList.add('hidden'));
+            document.getElementById(viewName).classList.remove('hidden');
+        }
+
+        async function handleEmailSignUp(e) {
+            e.preventDefault();
+            const email = document.getElementById('signupEmail').value;
+            const password = document.getElementById('signupPassword').value;
+            try {
+                await createUserWithEmailAndPassword(auth, email, password);
+                showMessage("Account created successfully. Logging you in...", "success");
+            } catch (error) {
+                console.error("Signup error:", error);
+                showMessage(`Signup failed: ${error.message}`, "error");
+            }
+        }
+
+        async function handleEmailLogin(e) {
+            e.preventDefault();
+            const email = document.getElementById('loginEmail').value;
+            const password = document.getElementById('loginPassword').value;
+            try {
+                await signInWithEmailAndPassword(auth, email, password);
+                showMessage("Logged in successfully!", "success");
+            } catch (error) {
+                console.error("Login error:", error);
+                showMessage(`Login failed: ${error.message}`, "error");
+            }
+        }
+
+        async function handleGoogleLogin() {
+            try {
+                const provider = new GoogleAuthProvider();
+                await signInWithPopup(auth, provider);
+                showMessage("Logged in with Google successfully!", "success");
+            } catch (error) {
+                console.error("Google login error:", error);
+                showMessage(`Google login failed: ${error.message}`, "error");
+            }
+        }
+        
+        async function handlePasswordReset() {
+            const email = document.getElementById('loginEmail').value;
+            if (email) {
+                try {
+                    await sendPasswordResetEmail(auth, email);
+                    showMessage("Password reset email sent. Check your inbox.", "success");
+                } catch (error) {
+                    console.error("Password reset error:", error);
+                    showMessage(`Password reset failed: ${error.message}`, "error");
+                }
+            } else {
+                showMessage("Please enter your email in the login form to reset your password.", "error");
+            }
+        }
+
+        async function handleSignOut() {
+            try {
+                await signOut(auth);
+                showMessage("Signed out successfully.", "success");
+            } catch (error) {
+                console.error("Sign out error:", error);
+                showMessage(`Sign out failed: ${error.message}`, "error");
+            }
+        }
 
         window.onload = function() {
             initFirebase();
             updateActiveTab('dashboard');
             
+            // Set up dark mode based on local storage or system preference
             if (localStorage.theme === 'light' || (!('theme' in localStorage) && window.matchMedia('(prefers-color-scheme: light)').matches)) {
                 document.body.setAttribute('data-theme', 'light');
             } else {
@@ -615,7 +757,7 @@
 
             document.getElementById('tab-btn-dashboard').addEventListener('click', () => updateActiveTab('dashboard'));
             document.getElementById('tab-btn-assistant').addEventListener('click', () => updateActiveTab('assistant'));
-            document.getElementById('tab-btn-diagnostics').addEventListener('click', () => { updateActiveTab('diagnostics'); updateDiagnostics(); });
+            document.getElementById('tab-btn-diagnostics').addEventListener('click', () => updateActiveTab('diagnostics'));
             document.getElementById('tab-btn-crops').addEventListener('click', () => {
                 updateActiveTab('crops');
                 updateCropsAndCropsInfo();
@@ -643,14 +785,21 @@
                 document.getElementById('zoneDetailView').classList.add('hidden');
             });
             
-            // Replaced all auth listeners with a mock sign-out button action
-            document.getElementById('logout-btn').addEventListener('click', () => {
-                showMessage("Signed out successfully (SIMULATION ENDED).", "success"); 
-                document.getElementById('appContainer').classList.add('hidden');
-                document.body.innerHTML = '<h1 class="text-3xl text-gray-400">Simulation Ended. Reload page to restart.</h1>';
+            // Auth listeners
+            document.getElementById('login-form').addEventListener('submit', handleEmailLogin);
+            document.getElementById('signup-form').addEventListener('submit', handleEmailSignUp);
+            document.getElementById('google-login-btn').addEventListener('click', handleGoogleLogin);
+            document.getElementById('forgot-password-link').addEventListener('click', handlePasswordReset);
+            document.getElementById('logout-btn').addEventListener('click', handleSignOut);
+            
+            document.getElementById('showSignup').addEventListener('click', (e) => {
+                e.preventDefault();
+                updateAuthView('signup');
             });
-
-            updateMoistureChart(activeZone); 
+            document.getElementById('showLogin').addEventListener('click', (e) => {
+                e.preventDefault();
+                updateAuthView('login');
+            });
         };
     </script>
     <style>
@@ -792,6 +941,56 @@
 </head>
 <body data-theme="dark" class="min-h-screen p-4 sm:p-8 flex items-center justify-center">
     
+    <div id="authContainer" class="w-full max-w-sm bg-gray-900 rounded-2xl p-6 sm:p-10 shadow-lg border border-gray-800">
+        <div id="login" class="auth-view">
+            <h2 class="text-3xl font-bold text-center text-gray-100 mb-6">Log In</h2>
+            <form id="login-form">
+                <div class="mb-4">
+                    <input type="email" id="loginEmail" placeholder="Email" class="w-full p-3 rounded-lg bg-gray-800 text-gray-200 border border-gray-700 focus:outline-none focus:ring-2 focus:ring-green-500" required>
+                </div>
+                <div class="mb-6">
+                    <input type="password" id="loginPassword" placeholder="Password" class="w-full p-3 rounded-lg bg-gray-800 text-gray-200 border border-gray-700 focus:outline-none focus:ring-2 focus:ring-green-500" required>
+                </div>
+                <button type="submit" class="w-full bg-green-600 hover:bg-green-700 text-white font-bold py-3 rounded-lg transition-colors">Log In</button>
+            </form>
+            <div class="text-center mt-4 text-gray-400 text-sm">
+                <a href="#" id="forgot-password-link" class="hover:text-green-400">Forgot Password?</a>
+            </div>
+            <div class="text-center my-4 text-gray-500">
+                OR
+            </div>
+            <div class="flex flex-col space-y-3">
+                <button id="google-login-btn" class="w-full flex items-center justify-center gap-2 bg-gray-800 hover:bg-gray-700 text-white font-bold py-3 rounded-lg transition-colors border border-gray-700">
+                    <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                        <path d="M22.56 12.28c0-.78-.07-1.54-.2-2.28H12v4.51h6.24c-.28 1.48-1.15 2.76-2.52 3.63v3.29h4.21a11.16 11.16 0 003.57-8.15z" />
+                        <path d="M12 23.99c2.83 0 5.19-.93 6.92-2.52l-4.2-3.29c-1.15.77-2.6.99-4.32.99-3.32 0-6.14-2.23-7.14-5.22H.67v3.29a12 12 0 0011.33 8.75z" />
+                        <path d="M4.86 14.12c-.5-.14-1.01-.2-1.52-.2-.51 0-1.02.06-1.52.2V10.83H.67a12.02 12.02 0 000 6.34h1.15a8.77 8.77 0 013.04-4.22z" />
+                        <path d="M12 4.86c1.69 0 3.2.58 4.39 1.77l3.77-3.77A11.96 11.96 0 0012 .13C5.64.13.38 5.4.38 12h1.15c0-4.6 3.06-8.52 7.29-9.87z" />
+                    </svg>
+                    <span>Sign in with Google</span>
+                </button>
+            </div>
+            <div class="text-center mt-6 text-gray-400">
+                Don't have an account? <a href="#" id="showSignup" class="text-green-400 font-semibold hover:underline">Sign up</a>
+            </div>
+        </div>
+        <div id="signup" class="auth-view hidden">
+            <h2 class="text-3xl font-bold text-center text-gray-100 mb-6">Sign Up</h2>
+            <form id="signup-form">
+                <div class="mb-4">
+                    <input type="email" id="signupEmail" placeholder="Email" class="w-full p-3 rounded-lg bg-gray-800 text-gray-200 border border-gray-700 focus:outline-none focus:ring-2 focus:ring-green-500" required>
+                </div>
+                <div class="mb-6">
+                    <input type="password" id="signupPassword" placeholder="Password" class="w-full p-3 rounded-lg bg-gray-800 text-gray-200 border border-gray-700 focus:outline-none focus:ring-2 focus:ring-green-500" required>
+                </div>
+                <button type="submit" class="w-full bg-green-600 hover:bg-green-700 text-white font-bold py-3 rounded-lg transition-colors">Sign Up</button>
+            </form>
+            <div class="text-center mt-6 text-gray-400">
+                Already have an account? <a href="#" id="showLogin" class="text-green-400 font-semibold hover:underline">Log In</a>
+            </div>
+        </div>
+    </div>
+
     <div id="appContainer" class="hidden w-full max-w-4xl bg-gray-900 rounded-2xl p-6 sm:p-10 shadow-lg border border-gray-800">
         <header class="flex flex-col sm:flex-row items-start sm:items-center justify-between mb-8">
             <div class="flex items-center gap-4 mb-4 sm:mb-0">
@@ -800,7 +999,7 @@
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 3v18M12 3c-1.105 0-2 .895-2 2s.895 2 2 2h0c1.105 0 2-.895 2-2s-.895-2-2-2zM4 14h16m-8 0a4 4 0 100-8 4 4 0 000 8z"></path>
                     </svg>
                 </div>
-                <h1 class="text-3xl sm:text-4xl font-bold text-gray-100">Hydro-AI (SIMULATION)</h1>
+                <h1 class="text-3xl sm:text-4xl font-bold text-gray-100">Hydro-AI</h1>
             </div>
             <div class="flex items-center gap-4">
                 <label id="mode-toggle" class="mode-toggle-btn">
@@ -813,7 +1012,7 @@
                 </label>
                 <div class="flex flex-col items-start sm:items-end text-sm text-gray-400">
                     <span id="userIdDisplay" class="truncate">User: Loading...</span>
-                    <button id="logout-btn" class="mt-1 text-red-400 hover:text-red-500 font-semibold">End Simulation</button>
+                    <button id="logout-btn" class="mt-1 text-red-400 hover:text-red-500 font-semibold">Log Out</button>
                 </div>
             </div>
         </header>
@@ -857,7 +1056,7 @@
                 </div>
 
                 <div class="bg-gray-800 p-6 rounded-xl shadow-inner border border-green-500 mb-8">
-                    <h3 class="text-xl font-bold text-green-400 mb-4">⭐ SIMULATED ESP32 RAW Live Feed ⭐</h3>
+                    <h3 class="text-xl font-bold text-green-400 mb-4">⭐ ESP32 RAW Live Feed ⭐</h3>
                     <div class="space-y-2 text-gray-400">
                         <p>Soil Moisture: <span id="soil" class="text-gray-100 font-bold">...Loading</span></p>
                         <p>Temperature: <span id="temperature" class="text-gray-100 font-bold">...Loading</span></p>
@@ -899,7 +1098,7 @@
                     <h3 class="text-lg font-semibold text-gray-100 mb-4">AI & System Control</h3>
                     
                     <div class="flex items-center justify-between mb-4">
-                        <span class="text-gray-400">Enable AI-Powered Mode (SIMULATION)</span>
+                        <span class="text-gray-400">Enable AI-Powered Mode</span>
                         <label class="relative inline-flex items-center cursor-pointer">
                             <input type="checkbox" id="aiModeToggle" class="sr-only peer" checked>
                             <div class="w-11 h-6 bg-gray-600 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-green-400 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-green-600"></div>
@@ -961,7 +1160,7 @@
                 <div class="bg-gray-800 p-6 rounded-xl shadow-inner border border-gray-700">
                     <h3 class="text-lg font-semibold text-gray-100 mb-4">Moisture Trends (Past 7 Days)</h3>
                     <div class="w-full h-48 bg-gray-700 rounded-lg flex items-center justify-center text-gray-500 italic">
-                        <canvas id="moistureChart" class="w-full h-full"></canvas>
+                        [ Placeholder for Chart.js graph ]
                     </div>
                 </div>
             </div>
